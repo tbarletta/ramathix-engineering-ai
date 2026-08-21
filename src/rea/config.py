@@ -13,6 +13,7 @@ class Settings:
     command_policy: Path
     model_config: Path
     knowledge_path: Path
+    work_path: Path
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -29,4 +30,5 @@ class Settings:
             command_policy=resolve_path("REA_COMMAND_POLICY", "config/policies/commands.yaml"),
             model_config=resolve_path("REA_MODEL_CONFIG", "config/models.yaml"),
             knowledge_path=resolve_path("REA_KNOWLEDGE_PATH", ".rea/knowledge"),
+            work_path=resolve_path("REA_WORK_PATH", ".rea/work"),
         )

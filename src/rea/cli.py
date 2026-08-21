@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 
@@ -13,6 +14,13 @@ from .models import ModelRouter, OllamaClient
 from .orchestrator import TechLeadAgent
 from .policy import CommandPolicy
 from .sandbox import DockerSandbox
+from .team import (
+    CostApprovalRequired,
+    FirstTeamWorkflow,
+    RequestRejected,
+    WorkPackageStore,
+)
+from .team.context import infer_knowledge_repository
 
 app = typer.Typer(help="Ramathix Engineering AI CLI")
 models_app = typer.Typer(help="Model routing and runtime status")
@@ -20,22 +28,25 @@ policy_app = typer.Typer(help="Command governance")
 issue_app = typer.Typer(help="GitHub Issue workflows")
 sandbox_app = typer.Typer(help="Isolated command execution")
 repo_app = typer.Typer(help="Repository knowledge and reverse engineering")
+team_app = typer.Typer(help="First AI engineering team")
 app.add_typer(models_app, name="models")
 app.add_typer(policy_app, name="policy")
 app.add_typer(issue_app, name="issue")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(repo_app, name="repo")
+app.add_typer(team_app, name="team")
 
 
 @app.command()
 def status() -> None:
     settings = Settings.from_env()
-    typer.echo("Ramathix Engineering AI V0.2")
+    typer.echo("Ramathix Engineering AI V0.3")
     typer.echo(f"home: {settings.home}")
     typer.echo(f"ollama: {settings.ollama_url}")
     typer.echo(f"policy: {settings.command_policy}")
     typer.echo(f"audit: {settings.audit_path}")
     typer.echo(f"knowledge: {settings.knowledge_path}")
+    typer.echo(f"work: {settings.work_path}")
 
 
 @models_app.command("status")
@@ -127,6 +138,57 @@ def repo_list() -> None:
     typer.echo(json.dumps(repositories, ensure_ascii=False, indent=2))
 
 
+@team_app.command("plan")
+def team_plan(
+    number: int,
+    repo: str = typer.Option(..., "--repo"),
+    knowledge_repo: str | None = typer.Option(None, "--knowledge-repo"),
+    knowledge_root: str | None = typer.Option(None, "--knowledge-root"),
+) -> None:
+    settings = Settings.from_env()
+    issue = GitHubClient().get_issue(repo, number)
+    audit = AuditLog(settings.audit_path)
+    audit.write(
+        "issue.loaded",
+        actor="github",
+        data={"repo": repo, "issue": number, "title": issue.title},
+    )
+    workflow = _first_team_workflow(settings)
+    try:
+        package, saved = workflow.plan(
+            issue,
+            knowledge_repository=knowledge_repo or infer_knowledge_repository(repo),
+            knowledge_root=knowledge_root,
+        )
+    except CostApprovalRequired as exc:
+        _print_cost_gate(exc)
+    except RequestRejected as exc:
+        typer.echo(
+            json.dumps({"decision": "reject", "reason": str(exc)}, ensure_ascii=False, indent=2)
+        )
+        raise typer.Exit(code=30) from exc
+
+    payload = package.to_dict()
+    payload["saved"] = str(saved)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@team_app.command("review")
+def team_review(plan: Path) -> None:
+    settings = Settings.from_env()
+    workflow = _first_team_workflow(settings)
+    try:
+        review, saved = workflow.review(plan)
+    except CostApprovalRequired as exc:
+        _print_cost_gate(exc)
+
+    payload = dict(review.raw)
+    payload["saved"] = str(saved)
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+    if review.decision == "request_changes":
+        raise typer.Exit(code=10)
+
+
 @sandbox_app.command("run")
 def sandbox_run(
     command: str,
@@ -148,6 +210,33 @@ def sandbox_run(
     if result.stderr:
         typer.echo(result.stderr, err=True, nl=False)
     raise typer.Exit(code=result.returncode)
+
+
+def _first_team_workflow(settings: Settings) -> FirstTeamWorkflow:
+    return FirstTeamWorkflow(
+        router=ModelRouter.from_yaml(settings.model_config),
+        model=OllamaClient(settings.ollama_url),
+        knowledge_store=JsonKnowledgeStore(settings.knowledge_path),
+        work_store=WorkPackageStore(settings.work_path),
+        policy=CommandPolicy.from_yaml(settings.command_policy),
+        audit=AuditLog(settings.audit_path),
+    )
+
+
+def _print_cost_gate(exc: CostApprovalRequired) -> NoReturn:
+    typer.echo(
+        json.dumps(
+            {
+                "status": "COST_APPROVAL_REQUIRED",
+                "stage": exc.stage,
+                "proposal": exc.payload,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        err=True,
+    )
+    raise typer.Exit(code=20) from exc
 
 
 if __name__ == "__main__":

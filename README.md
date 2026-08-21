@@ -1,8 +1,13 @@
 # Ramathix Engineering AI
 
-**Ramathix Engineering AI (REA)** is a local-first, governed multi-agent software engineering platform. Its goal is to evolve from a local copilot into an autonomous engineering organization composed of Engineering Manager, Tech Lead, Senior Developers, QA, Security, Performance, SRE, Cloud Architecture and FinOps agents.
+**Ramathix Engineering AI (REA)** is a local-first, governed multi-agent software engineering
+platform. Its goal is to evolve from a local copilot into an autonomous engineering organization
+composed of Engineering Manager, Tech Lead, Senior Developers, QA, Security, Performance, SRE,
+Cloud Architecture and FinOps agents.
 
-The project intentionally separates **LLM reasoning** from **execution authority**. Models may request actions, but command execution, production access, cost decisions and future merges are controlled by deterministic governance components.
+The project intentionally separates **LLM reasoning** from **execution authority**. Models may
+request actions, but command execution, production access, cost decisions and future merges are
+controlled by deterministic governance components.
 
 ## V0.1 Foundation
 
@@ -18,20 +23,19 @@ The first milestone provides the safety and runtime foundation:
 - append-only audit log with secret redaction
 - GitHub PR adapter (draft by default)
 
-See [`docs/architecture/V0.1.md`](docs/architecture/V0.1.md) for the architecture and invariants.
+See [`docs/architecture/V0.1.md`](docs/architecture/V0.1.md).
 
 ## V0.2 Knowledge Engine
 
-V0.2 adds deterministic repository reverse engineering before any LLM inference. The scanner inventories:
+V0.2 adds deterministic repository reverse engineering before LLM inference:
 
-- languages and manifests
-- frameworks and persistence technologies
-- queues and messaging
-- infrastructure and CI/CD
-- tests and API endpoints
-- Python symbols and source import edges
+- languages, manifests and frameworks
+- persistence, queues and messaging
+- infrastructure, CI/CD, tests and API endpoints
+- Python symbols and TypeScript/JavaScript import edges
 - governed Git history
-- a dependency graph and multi-repository catalog
+- dependency graph and multi-repository catalog
+- evidence and confidence for every knowledge fact
 
 ```bash
 rea repo scan ../social-media
@@ -39,11 +43,41 @@ rea repo scan ../ramathix-ai-core --json
 rea repo list
 ```
 
-Repository inventories are stored under `.rea/knowledge/` by default. Each fact records evidence and confidence. Deterministic findings are `confirmed`; future architecture and business-rule inference must use the explicit `inferred_*` confidence levels rather than being treated as facts.
+Inventories are stored under `.rea/knowledge/` by default. Deterministic findings are
+`confirmed`; architecture or business inference must use `inferred_*` confidence levels.
 
-The AST layer is provider-based. V0.2 ships a Python `ast` provider and a deterministic TypeScript/JavaScript import provider, with a Tree-sitter extension point for additional languages and grammars.
+See [`docs/architecture/V0.2.md`](docs/architecture/V0.2.md).
 
-See [`docs/architecture/V0.2.md`](docs/architecture/V0.2.md) for details.
+## V0.3 First AI Team
+
+V0.3 introduces the first functional engineering team:
+
+```text
+Engineering Manager
+        |
+        v
+    Tech Lead
+        |
+        v
+Senior Developer
+        |
+        v
+  Code Reviewer
+```
+
+The team consumes GitHub Issues and V0.2 knowledge. It creates structured work packages and
+independent reviews, but **does not edit code or execute developer-proposed commands yet**.
+
+```bash
+rea team plan 123 --repo tbarletta/social-media
+rea team review .rea/work/issue-123-plan.json
+```
+
+A Senior Developer proposal includes candidate commands, but each command is only classified by
+the deterministic policy engine. Cost impact at any agent stage stops the workflow and requires
+human approval.
+
+See [`docs/architecture/V0.3.md`](docs/architecture/V0.3.md).
 
 ## Requirements
 
@@ -62,7 +96,7 @@ python -m pip install -e '.[dev]'
 cp .env.example .env
 ```
 
-On Windows PowerShell, activate with `.venv\\Scripts\\Activate.ps1`.
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
 
 ## First commands
 
@@ -71,17 +105,22 @@ rea status
 rea models status
 rea policy check "git status"
 rea policy check "terraform apply"
-rea issue analyze 2 --repo tbarletta/ramathix-engineering-ai
 rea repo scan ../social-media
 rea repo list
+rea team plan 123 --repo tbarletta/social-media
+rea team review .rea/work/issue-123-plan.json
 rea sandbox run "pytest" --workspace . --image python:3.12-slim
 ```
 
-The sandbox has networking disabled by default. A command must be explicitly allowed by `config/policies/commands.yaml` before it can run. Knowledge-engine subprocesses such as `git log` also go through the same central policy before execution.
+The sandbox has networking disabled by default. A command must be explicitly allowed by
+`config/policies/commands.yaml` before execution. Knowledge-engine subprocesses also use the same
+central policy.
 
 ## Model routing
 
-`config/models.yaml` maps roles to model capabilities instead of permanently binding a role to a single LLM. This allows models and runtimes to be replaced without changing agent or governance logic.
+`config/models.yaml` maps roles to capabilities rather than permanently binding a role to a
+single LLM. Models and runtimes can therefore be replaced without changing agent or governance
+logic.
 
 ## Governance
 
@@ -95,12 +134,13 @@ Priority order for knowledge and decisions:
 6. Git history
 7. AI inference
 
-Any decision that may create or increase monetary cost requires human approval, including in future autonomous operating modes.
+Any decision that may create or increase monetary cost requires human approval, including in
+future autonomous operating modes.
 
 ## Roadmap
 
 - **V0.1 Foundation:** CLI, model routing, sandbox, command policy, audit, GitHub Issue adapter
-- **V0.2 Knowledge:** deterministic reverse engineering, AST/import graph, Git history, knowledge catalog
+- **V0.2 Knowledge:** deterministic reverse engineering, AST/import graph, Git history, catalog
 - **V0.3 First Team:** Engineering Manager, Tech Lead, Senior Developer, Reviewer
 - **V0.4 Level 6:** Issue -> plan -> branch -> implementation -> tests -> review -> draft PR
 - **V0.5 Specialization:** Backend, Frontend, Mobile, Database, DevOps, QA

@@ -15,6 +15,7 @@ models:
 routes:
   engineering_manager: reasoner
   tech_lead: reasoner
+  senior_developer: coder
   senior_backend: coder
   senior_frontend: coder
   senior_mobile: coder
