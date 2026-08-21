@@ -101,7 +101,8 @@ def test_specialist_can_raise_but_not_lower_risk() -> None:
         ],
     )
     assessment = RiskEngine().assess(package(), [specialist])
-    assert assessment.risk_level is GovernanceRiskLevel.HIGH
+    assert assessment.risk_level is GovernanceRiskLevel.CRITICAL
+    assert assessment.decision is GovernanceDecision.HUMAN_APPROVAL
 
 
 def test_production_write_is_blocked() -> None:
@@ -136,6 +137,7 @@ def test_high_risk_requires_explicit_tech_lead_approval(tmp_path) -> None:
     with pytest.raises(GovernanceApprovalRequired) as exc:
         workflow.enforce(package(risk="high"), context())
     assert exc.value.required == "tech-lead"
+    assert exc.value.rule_id == "governance-tech-lead"
 
     assessment = workflow.enforce(
         package(risk="high"),
@@ -143,6 +145,18 @@ def test_high_risk_requires_explicit_tech_lead_approval(tmp_path) -> None:
         approvals={"tech-lead"},
     )
     assert assessment.decision is GovernanceDecision.TECH_LEAD_APPROVAL
+
+
+def test_critical_risk_requires_explicit_human_approval(tmp_path) -> None:
+    workflow = AdvancedGovernanceWorkflow(
+        router=FakeRouter(),
+        model=SafeModel(),
+        audit=AuditLog(tmp_path / "audit.jsonl"),
+    )
+    with pytest.raises(GovernanceApprovalRequired) as exc:
+        workflow.enforce(package(risk="critical"), context(), approvals={"tech-lead"})
+    assert exc.value.required == "human"
+    assert exc.value.rule_id == "governance-human"
 
 
 def test_production_write_cannot_be_approved_by_governance_flag(tmp_path) -> None:
