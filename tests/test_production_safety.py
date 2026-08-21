@@ -137,20 +137,30 @@ class RequestRedactionModel:
         }
 
 
-def test_request_secrets_are_redacted_before_prompt_and_artifacts(tmp_path: Path) -> None:
-    secret_request = IncidentRequest(
+def secret_request() -> IncidentRequest:
+    return IncidentRequest(
         incident_id="INC-REQUEST-SECRET",
         title="Credential appeared in incident input",
         service="payments",
         description='token="this-is-a-sensitive-request-token"',
     )
+
+
+def test_agent_redacts_request_without_workflow() -> None:
+    IncidentSREAgent(FakeRouter(), RequestRedactionModel()).analyze(
+        secret_request(),
+        evidence(),
+    )
+
+
+def test_request_secrets_are_redacted_before_prompt_and_artifacts(tmp_path: Path) -> None:
     workflow = IncidentWorkflow(
         provider=StaticProvider(),
         agent=IncidentSREAgent(FakeRouter(), RequestRedactionModel()),
         store=IncidentStore(tmp_path / "incidents"),
         audit=AuditLog(tmp_path / "audit.jsonl"),
     )
-    _, json_path, md_path = workflow.analyze(secret_request)
+    _, json_path, md_path = workflow.analyze(secret_request())
     assert "sensitive-request-token" not in json_path.read_text(encoding="utf-8")
     assert "sensitive-request-token" not in md_path.read_text(encoding="utf-8")
     assert "sensitive-request-token" not in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
