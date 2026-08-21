@@ -1,0 +1,16 @@
+name: CI Smoke
+
+on:
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  runner-smoke:
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Runner provisioned
+        run: |
+          echo "runner-ok"
+          uname -a
+          python --version || true
