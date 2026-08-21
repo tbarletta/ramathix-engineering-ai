@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 
@@ -9,6 +10,21 @@ from .agent import IncidentSREAgent
 from .contracts import IncidentAnalysis, IncidentRequest, ProductionSignal
 from .providers import ProductionSignalProvider
 from .redaction import redact_value
+
+
+_INCIDENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+
+
+def _sanitize_request(request: IncidentRequest) -> IncidentRequest:
+    incident_id = request.incident_id.strip()
+    if not _INCIDENT_ID.fullmatch(incident_id):
+        raise ValueError(
+            "incident_id must start with an alphanumeric character and contain only "
+            "letters, numbers, '.', '_' or '-' (max 128 characters)"
+        )
+    payload = redact_value(asdict(request))
+    payload["incident_id"] = incident_id
+    return IncidentRequest(**payload)
 
 
 class IncidentStore:
@@ -21,19 +37,22 @@ class IncidentStore:
         signals: list[ProductionSignal],
         analysis: IncidentAnalysis,
     ) -> tuple[Path, Path]:
+        safe_request = _sanitize_request(request)
         self.root.mkdir(parents=True, exist_ok=True)
-        json_path = self.root / f"{request.incident_id}.json"
-        md_path = self.root / f"{request.incident_id}.md"
-        payload = {
-            "incident": asdict(request),
-            "signals": [item.to_dict() for item in signals],
-            "analysis": analysis.to_dict(),
-        }
+        json_path = self.root / f"{safe_request.incident_id}.json"
+        md_path = self.root / f"{safe_request.incident_id}.md"
+        payload = redact_value(
+            {
+                "incident": asdict(safe_request),
+                "signals": [item.to_dict() for item in signals],
+                "analysis": analysis.to_dict(),
+            }
+        )
         json_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        md_path.write_text(self._postmortem(request, analysis), encoding="utf-8")
+        md_path.write_text(self._postmortem(safe_request, analysis), encoding="utf-8")
         return json_path, md_path
 
     @staticmethod
@@ -81,15 +100,16 @@ class IncidentWorkflow:
         self.audit = audit
 
     def inspect(self, request: IncidentRequest) -> dict:
-        signals = self._collect(request)
+        safe_request = _sanitize_request(request)
+        signals = self._collect(request, audit_request=safe_request)
         by_kind: dict[str, int] = {}
         by_severity: dict[str, int] = {}
         for item in signals:
             by_kind[item.kind.value] = by_kind.get(item.kind.value, 0) + 1
             by_severity[item.severity] = by_severity.get(item.severity, 0) + 1
         return {
-            "incident_id": request.incident_id,
-            "service": request.service,
+            "incident_id": safe_request.incident_id,
+            "service": safe_request.service,
             "signals": len(signals),
             "by_kind": by_kind,
             "by_severity": by_severity,
@@ -97,15 +117,16 @@ class IncidentWorkflow:
         }
 
     def analyze(self, request: IncidentRequest) -> tuple[IncidentAnalysis, Path, Path]:
-        signals = self._collect(request)
-        analysis = self.agent.analyze(request, signals)
-        json_path, md_path = self.store.save(request, signals, analysis)
+        safe_request = _sanitize_request(request)
+        signals = self._collect(request, audit_request=safe_request)
+        analysis = self.agent.analyze(safe_request, signals)
+        json_path, md_path = self.store.save(safe_request, signals, analysis)
         self.audit.write(
             "incident.analyzed",
             actor="incident_sre",
             data={
-                "incident": request.incident_id,
-                "service": request.service,
+                "incident": safe_request.incident_id,
+                "service": safe_request.service,
                 "evidence_count": len(signals),
                 "hypotheses": len(analysis.hypotheses),
                 "cost_approval_required": analysis.cost_approval_required,
@@ -114,7 +135,12 @@ class IncidentWorkflow:
         )
         return analysis, json_path, md_path
 
-    def _collect(self, request: IncidentRequest) -> list[ProductionSignal]:
+    def _collect(
+        self,
+        request: IncidentRequest,
+        *,
+        audit_request: IncidentRequest | None = None,
+    ) -> list[ProductionSignal]:
         raw = self.provider.collect(request)
         signals = []
         for item in raw:
@@ -132,12 +158,13 @@ class IncidentWorkflow:
                 )
             )
         signals.sort(key=lambda item: (item.timestamp, item.evidence_id))
+        safe_request = audit_request or _sanitize_request(request)
         self.audit.write(
             "incident.evidence_collected",
             actor="production_read",
             data={
-                "incident": request.incident_id,
-                "service": request.service,
+                "incident": safe_request.incident_id,
+                "service": safe_request.service,
                 "count": len(signals),
                 "evidence_ids": [item.evidence_id for item in signals],
             },
