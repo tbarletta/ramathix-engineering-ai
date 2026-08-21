@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from .contracts import (
@@ -13,6 +14,8 @@ from .contracts import (
 
 _SECURITY_MARKERS = (
     "auth",
+    "authentication",
+    "authorization",
     "oauth",
     "jwt",
     "credential",
@@ -153,12 +156,12 @@ class RiskEngine:
             signals,
         )
 
-        production_write = any(marker in text for marker in _PRODUCTION_WRITE_MARKERS)
+        production_write = self._contains_any(text, _PRODUCTION_WRITE_MARKERS)
         if production_write:
             score = max(score, 100)
             signals.append("production write/state change")
 
-        deterministic_cost = any(marker in text for marker in _COST_MARKERS)
+        deterministic_cost = self._contains_any(text, _COST_MARKERS)
         cost_impact = deterministic_cost or self._declared_cost(work_package)
         if deterministic_cost:
             signals.append("potential cost increase")
@@ -233,18 +236,26 @@ class RiskEngine:
         )
         return any(bool(section.get("cost_impact")) for section in sections)
 
-    @staticmethod
+    @classmethod
     def _marker_score(
+        cls,
         text: str,
         markers: tuple[str, ...],
         score: int,
         signal: str,
         signals: list[str],
     ) -> int:
-        if not any(marker in text for marker in markers):
+        if not cls._contains_any(text, markers):
             return 0
         signals.append(signal)
         return score
+
+    @staticmethod
+    def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
+        return any(
+            re.search(rf"(?<!\w){re.escape(marker)}(?!\w)", text) is not None
+            for marker in markers
+        )
 
     @staticmethod
     def _level(score: int) -> GovernanceRiskLevel:
