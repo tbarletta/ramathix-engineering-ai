@@ -3,8 +3,10 @@ from pathlib import Path
 import pytest
 
 from rea.audit import AuditLog
+from rea.level6.coding import MutationBoundaryError, SecretDetected
 from rea.models import ModelRouter
 from rea.specialists.agents import QATestingGateAgent, SpecializedDeveloperAgent
+from rea.specialists.integration import RoutedSeniorDeveloperExecutionAgent
 from rea.specialists.profiles import SpecialistRole
 from rea.specialists.router import AgentAssignment, RoutingError
 from rea.team.context import TeamKnowledgeContext
@@ -82,6 +84,88 @@ def test_specialist_cannot_mutate_outside_assignment(tmp_path: Path) -> None:
             source_files={"src/api.py": "VALUE = 0\n"},
             feedback=[],
             upstream_changes=[],
+        )
+
+
+def test_routed_executor_converts_scope_violation_to_level6_block(tmp_path: Path) -> None:
+    routed = RoutedSeniorDeveloperExecutionAgent(
+        router=router(),
+        model=FakeModel(
+            {
+                "summary": "bad scope",
+                "changes": [
+                    {
+                        "path": "src/other.py",
+                        "action": "create",
+                        "content": "VALUE = 1\n",
+                    }
+                ],
+                "commands": [],
+                "cost_impact": False,
+            }
+        ),
+        audit=AuditLog(tmp_path / "audit.jsonl"),
+    )
+    work_package = {
+        "repository": "tbarletta/example",
+        "technical_plan": {
+            "tasks": [
+                {
+                    "id": "api",
+                    "owner_role": "senior_backend",
+                    "files": ["src/api.py"],
+                    "dependencies": [],
+                }
+            ]
+        },
+    }
+    with pytest.raises(MutationBoundaryError, match="specialist execution blocked"):
+        routed.implement(
+            work_package=work_package,
+            context=context(),
+            source_files={"src/api.py": "VALUE = 0\n"},
+            feedback=[],
+        )
+
+
+def test_routed_executor_rejects_generated_secret_before_handoff(tmp_path: Path) -> None:
+    routed = RoutedSeniorDeveloperExecutionAgent(
+        router=router(),
+        model=FakeModel(
+            {
+                "summary": "secret",
+                "changes": [
+                    {
+                        "path": "src/api.py",
+                        "action": "modify",
+                        "content": 'API_KEY = "sk-abcdefghijklmnopqrstuvwxyz123456"\n',
+                    }
+                ],
+                "commands": [],
+                "cost_impact": False,
+            }
+        ),
+        audit=AuditLog(tmp_path / "audit.jsonl"),
+    )
+    work_package = {
+        "repository": "tbarletta/example",
+        "technical_plan": {
+            "tasks": [
+                {
+                    "id": "api",
+                    "owner_role": "senior_backend",
+                    "files": ["src/api.py"],
+                    "dependencies": [],
+                }
+            ]
+        },
+    }
+    with pytest.raises(SecretDetected):
+        routed.implement(
+            work_package=work_package,
+            context=context(),
+            source_files={"src/api.py": "VALUE = 0\n"},
+            feedback=[],
         )
 
 
