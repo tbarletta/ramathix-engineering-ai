@@ -138,6 +138,25 @@ def test_production_write_is_blocked() -> None:
     assert assessment.decision is GovernanceDecision.BLOCKED
 
 
+def test_production_reference_without_state_change_is_not_blocked() -> None:
+    assessment = RiskEngine().assess(
+        package(text="Production deployment is out of scope; change documentation only."),
+        [],
+    )
+    assert assessment.production_write is False
+    assert assessment.decision is not GovernanceDecision.BLOCKED
+
+
+def test_terraform_apply_to_staging_is_cost_gate_not_production_write() -> None:
+    assessment = RiskEngine().assess(
+        package(text="terraform apply to staging infrastructure"),
+        [],
+    )
+    assert assessment.production_write is False
+    assert assessment.cost_impact is True
+    assert assessment.decision is GovernanceDecision.COST_APPROVAL
+
+
 def test_cost_gate_cannot_be_bypassed_by_human_risk_approval(tmp_path) -> None:
     workflow = AdvancedGovernanceWorkflow(
         router=FakeRouter(),
