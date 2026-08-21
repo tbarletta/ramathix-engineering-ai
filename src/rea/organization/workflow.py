@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from ..audit import AuditLog
 from ..governance import GovernanceDecision, RiskEngine
+from ..governance.redaction import redact_text
 from ..team import CostApprovalRequired
 from .contracts import OrganizationPlan, WorkUnit, WorkUnitState
 from .manager import AIEngineeringManager
@@ -68,10 +69,12 @@ class OrganizationWorkflow:
         if not repositories:
             raise ValueError("at least one repository is required")
 
+        safe_goal = redact_text(strategic_goal.strip())
+        safe_constraints = [redact_text(item) for item in constraints]
         model_constraints, initiatives, projects, work_units = self.manager.plan(
-            strategic_goal,
+            safe_goal,
             repositories=repositories,
-            constraints=constraints,
+            constraints=safe_constraints,
         )
         self._validate_structure(repositories, initiatives, projects, work_units)
         prioritized = self.portfolio.prioritize(work_units)
@@ -80,8 +83,8 @@ class OrganizationWorkflow:
 
         plan = OrganizationPlan(
             id=f"org-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid4().hex[:8]}",
-            strategic_goal=strategic_goal.strip(),
-            constraints=list(dict.fromkeys([*constraints, *model_constraints])),
+            strategic_goal=safe_goal,
+            constraints=list(dict.fromkeys([*safe_constraints, *model_constraints])),
             initiatives=initiatives,
             projects=projects,
             work_units=prioritized,
