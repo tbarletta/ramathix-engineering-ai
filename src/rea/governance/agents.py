@@ -8,6 +8,7 @@ from ..models import ModelRouter
 from ..team.agents import StructuredModelClient
 from ..team.context import TeamKnowledgeContext
 from .contracts import GovernanceFinding, GovernanceRiskLevel, SpecialistAssessment
+from .redaction import redact_value
 
 
 GOVERNANCE_SCHEMA = {
@@ -70,25 +71,30 @@ class GovernanceSpecialistAgent:
         context: TeamKnowledgeContext,
     ) -> SpecialistAssessment:
         target = self.router.resolve(self.profile.role)
-        payload = self.model.chat_json(
-            model=target.model,
-            system=(
-                f"You are the {self.profile.role} governance specialist. "
-                f"{self.profile.mission} "
-                "Assess only the supplied plan and repository knowledge. "
-                "Do not authorize execution. Escalation is allowed; lowering deterministic "
-                "risk is not. Mark production_write for any proposed production state change "
-                "and cost_impact whenever spend may increase."
-            ),
-            user=json.dumps(
-                {
-                    "work_package": work_package,
-                    "knowledge": context.compact,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            schema=GOVERNANCE_SCHEMA,
+        prompt_payload = redact_value(
+            {
+                "work_package": work_package,
+                "knowledge": context.compact,
+            }
+        )
+        payload = redact_value(
+            self.model.chat_json(
+                model=target.model,
+                system=(
+                    f"You are the {self.profile.role} governance specialist. "
+                    f"{self.profile.mission} "
+                    "Assess only the supplied plan and repository knowledge. "
+                    "Do not authorize execution. Escalation is allowed; lowering deterministic "
+                    "risk is not. Mark production_write for any proposed production state change "
+                    "and cost_impact whenever spend may increase."
+                ),
+                user=json.dumps(
+                    prompt_payload,
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                schema=GOVERNANCE_SCHEMA,
+            )
         )
         return SpecialistAssessment(
             role=self.profile.role,
