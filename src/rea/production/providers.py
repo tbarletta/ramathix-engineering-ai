@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Protocol
 
+from ..execution import GovernedLocalRunner
 from .contracts import IncidentRequest, ProductionSignal, SignalKind
 from .policy import ProductionCapability, ProductionReadPolicy
 
@@ -17,6 +18,7 @@ _KIND_CAPABILITY = {
     SignalKind.METRIC: ProductionCapability.METRICS_READ,
     SignalKind.TRACE: ProductionCapability.TRACES_READ,
     SignalKind.DEPLOYMENT: ProductionCapability.DEPLOYMENTS_READ,
+    SignalKind.GIT_CHANGE: ProductionCapability.SOURCE_READ,
     SignalKind.DATABASE: ProductionCapability.DATABASE_READ,
     SignalKind.QUEUE: ProductionCapability.QUEUE_READ,
     SignalKind.INFRASTRUCTURE: ProductionCapability.INFRASTRUCTURE_READ,
@@ -79,6 +81,70 @@ class JsonFileSignalProvider:
         if isinstance(payload, dict) and isinstance(payload.get("signals"), list):
             return [dict(item) for item in payload["signals"]]
         raise ValueError(f"unsupported signal snapshot format: {self.path}")
+
+
+class GitHistorySignalProvider:
+    """Reads recent Git commits and changed paths through the governed read-only runner."""
+
+    def __init__(
+        self,
+        repository: Path,
+        *,
+        policy: ProductionReadPolicy,
+        runner: GovernedLocalRunner,
+        max_commits: int = 20,
+    ) -> None:
+        self.repository = repository.resolve()
+        self.policy = policy
+        self.runner = runner
+        self.max_commits = max(1, min(max_commits, 100))
+
+    def collect(self, request: IncidentRequest) -> list[ProductionSignal]:
+        self.policy.authorize(ProductionCapability.SOURCE_READ)
+        result = self.runner.run(
+            [
+                "git",
+                "log",
+                "-n",
+                str(self.max_commits),
+                "--date=iso-strict",
+                "--pretty=format:%H%x1f%cI%x1f%s",
+            ],
+            cwd=self.repository,
+            actor="production_git_read",
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "git log failed")
+
+        signals: list[ProductionSignal] = []
+        for line in result.stdout.splitlines():
+            parts = line.split("\x1f", 2)
+            if len(parts) != 3:
+                continue
+            sha, timestamp, subject = parts
+            files = self._changed_files(sha)
+            signals.append(
+                ProductionSignal(
+                    evidence_id=f"git-{sha[:12]}",
+                    timestamp=timestamp,
+                    kind=SignalKind.GIT_CHANGE,
+                    source="git",
+                    service=request.service,
+                    summary=subject,
+                    attributes={"sha": sha, "files": files},
+                )
+            )
+        return signals
+
+    def _changed_files(self, sha: str) -> list[str]:
+        result = self.runner.run(
+            ["git", "show", "--format=", "--name-only", "--no-renames", sha],
+            cwd=self.repository,
+            actor="production_git_read",
+        )
+        if result.returncode != 0:
+            return []
+        return [line.strip() for line in result.stdout.splitlines() if line.strip()][:200]
 
 
 class CompositeSignalProvider:
