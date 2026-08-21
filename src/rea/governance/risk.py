@@ -59,22 +59,28 @@ _PERFORMANCE_MARKERS = (
     "index",
     "query performance",
 )
-_PRODUCTION_CONTEXT_MARKERS = (
-    "production",
-    "prod environment",
-    "prod cluster",
-    "prod database",
-)
-_STATE_CHANGE_MARKERS = (
-    "deploy",
-    "restart",
-    "rollback",
-    "scale",
-    "reprocess",
-    "clear cache",
-    "flush",
-    "terraform apply",
-    "kubectl apply",
+_PRODUCTION_WRITE_MARKERS = (
+    "production write",
+    "deploy to production",
+    "deploy to prod",
+    "restart production",
+    "restart prod",
+    "rollback production",
+    "rollback prod",
+    "scale production",
+    "scale prod",
+    "reprocess production",
+    "reprocess prod",
+    "clear production cache",
+    "clear prod cache",
+    "terraform apply to production",
+    "terraform apply in production",
+    "terraform apply to prod",
+    "terraform apply in prod",
+    "kubectl apply to production",
+    "kubectl apply in production",
+    "kubectl apply to prod",
+    "kubectl apply in prod",
 )
 _COST_MARKERS = (
     "provision",
@@ -147,13 +153,7 @@ class RiskEngine:
             signals,
         )
 
-        production_context = any(
-            marker in text for marker in _PRODUCTION_CONTEXT_MARKERS
-        )
-        state_change = any(marker in text for marker in _STATE_CHANGE_MARKERS)
-        production_write = "production write" in text or (
-            production_context and state_change
-        )
+        production_write = any(marker in text for marker in _PRODUCTION_WRITE_MARKERS)
         if production_write:
             score = max(score, 100)
             signals.append("production write/state change")
