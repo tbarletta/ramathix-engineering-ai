@@ -125,7 +125,11 @@ class IncidentSREAgent:
         signals: list[ProductionSignal],
     ) -> IncidentAnalysis:
         target = self.router.resolve(self.role)
-        evidence = [item.to_dict() for item in signals]
+        evidence = []
+        for signal in signals:
+            payload = redact_value(signal.to_dict())
+            payload["evidence_id"] = signal.evidence_id
+            evidence.append(payload)
         incident = redact_value(
             {
                 "id": request.incident_id,
