@@ -10,6 +10,7 @@ class SignalKind(StrEnum):
     METRIC = "metric"
     TRACE = "trace"
     DEPLOYMENT = "deployment"
+    GIT_CHANGE = "git_change"
     DATABASE = "database"
     QUEUE = "queue"
     INFRASTRUCTURE = "infrastructure"
