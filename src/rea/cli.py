@@ -8,6 +8,7 @@ import typer
 from .audit import AuditLog
 from .config import Settings
 from .github import GitHubClient
+from .knowledge import JsonKnowledgeStore, RepositoryScanner
 from .models import ModelRouter, OllamaClient
 from .orchestrator import TechLeadAgent
 from .policy import CommandPolicy
@@ -18,20 +19,23 @@ models_app = typer.Typer(help="Model routing and runtime status")
 policy_app = typer.Typer(help="Command governance")
 issue_app = typer.Typer(help="GitHub Issue workflows")
 sandbox_app = typer.Typer(help="Isolated command execution")
+repo_app = typer.Typer(help="Repository knowledge and reverse engineering")
 app.add_typer(models_app, name="models")
 app.add_typer(policy_app, name="policy")
 app.add_typer(issue_app, name="issue")
 app.add_typer(sandbox_app, name="sandbox")
+app.add_typer(repo_app, name="repo")
 
 
 @app.command()
 def status() -> None:
     settings = Settings.from_env()
-    typer.echo("Ramathix Engineering AI V0.1")
+    typer.echo("Ramathix Engineering AI V0.2")
     typer.echo(f"home: {settings.home}")
     typer.echo(f"ollama: {settings.ollama_url}")
     typer.echo(f"policy: {settings.command_policy}")
     typer.echo(f"audit: {settings.audit_path}")
+    typer.echo(f"knowledge: {settings.knowledge_path}")
 
 
 @models_app.command("status")
@@ -82,6 +86,45 @@ def issue_analyze(number: int, repo: str = typer.Option(..., "--repo")) -> None:
     if plan.cost_impact:
         typer.echo("\nCOST_APPROVAL_REQUIRED", err=True)
         raise typer.Exit(code=20)
+
+
+@repo_app.command("scan")
+def repo_scan(
+    path: Path,
+    include_git: bool = typer.Option(True, "--git/--no-git"),
+    full_json: bool = typer.Option(False, "--json"),
+) -> None:
+    settings = Settings.from_env()
+    audit = AuditLog(settings.audit_path)
+    policy = CommandPolicy.from_yaml(settings.command_policy)
+    inventory = RepositoryScanner(policy=policy, audit=audit).scan(
+        path, include_git=include_git
+    )
+    saved = JsonKnowledgeStore(settings.knowledge_path).save(inventory)
+    if full_json:
+        payload = inventory.to_dict()
+    else:
+        payload = {
+            "name": inventory.name,
+            "root": inventory.root,
+            "files": inventory.file_count,
+            "languages": inventory.languages,
+            "manifests": inventory.manifests,
+            "facts": len(inventory.facts),
+            "dependencies": len(inventory.dependencies),
+            "symbols": len(inventory.symbols),
+            "git_commits": inventory.git.commits_sampled,
+            "warnings": inventory.warnings,
+            "saved": str(saved),
+        }
+    typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@repo_app.command("list")
+def repo_list() -> None:
+    settings = Settings.from_env()
+    repositories = JsonKnowledgeStore(settings.knowledge_path).list_repositories()
+    typer.echo(json.dumps(repositories, ensure_ascii=False, indent=2))
 
 
 @sandbox_app.command("run")
