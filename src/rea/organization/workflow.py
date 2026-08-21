@@ -77,12 +77,27 @@ class OrganizationWorkflow:
             constraints=safe_constraints,
         )
         self._validate_structure(repositories, initiatives, projects, work_units)
+        plan_id = f"org-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid4().hex[:8]}"
         prioritized = self.portfolio.prioritize(work_units)
         for unit in prioritized:
             self._governance_preflight(unit)
+            self.audit.write(
+                "organization.work_unit_prioritized",
+                actor="portfolio_planner",
+                data={
+                    "plan": plan_id,
+                    "work_unit": unit.id,
+                    "priority_rank": unit.priority_rank,
+                    "priority_score": unit.priority_score,
+                    "state": unit.state.value,
+                    "risk_level": unit.governance.get("risk_level"),
+                    "decision": unit.governance.get("decision"),
+                    "cost_impact": unit.cost_impact,
+                },
+            )
 
         plan = OrganizationPlan(
-            id=f"org-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid4().hex[:8]}",
+            id=plan_id,
             strategic_goal=safe_goal,
             constraints=list(dict.fromkeys([*safe_constraints, *model_constraints])),
             initiatives=initiatives,
@@ -118,6 +133,11 @@ class OrganizationWorkflow:
         if self.github is None:
             raise RuntimeError("GitHub publisher is not configured")
         if "github-issue-create" not in approved_rules:
+            self.audit.write(
+                "organization.publication_blocked",
+                actor="governance",
+                data={"plan": plan_id, "reason": "github-issue-create approval missing"},
+            )
             raise IssuePublicationApprovalRequired(
                 "GitHub Issue creation requires --approve-rule github-issue-create"
             )
@@ -135,12 +155,34 @@ class OrganizationWorkflow:
         for unit in sorted(plan.work_units, key=lambda item: item.priority_rank):
             if unit.id not in selected or unit.state is WorkUnitState.PUBLISHED:
                 continue
-            self._require_dependency_publication(plan, unit, selected)
-            self._require_unit_approvals(
-                unit,
-                tech_lead_approvals=tech_lead_approvals,
-                human_approvals=human_approvals,
-                cost_approvals=cost_approvals,
+            try:
+                self._require_dependency_publication(plan, unit, selected)
+                self._require_unit_approvals(
+                    unit,
+                    tech_lead_approvals=tech_lead_approvals,
+                    human_approvals=human_approvals,
+                    cost_approvals=cost_approvals,
+                )
+            except (
+                CostApprovalRequired,
+                GovernanceUnitApprovalRequired,
+                OrganizationBlocked,
+            ) as exc:
+                self.audit.write(
+                    "organization.work_unit_publication_blocked",
+                    actor="governance",
+                    data={
+                        "plan": plan.id,
+                        "work_unit": unit.id,
+                        "reason": str(exc),
+                    },
+                )
+                raise
+
+            self.audit.write(
+                "organization.work_unit_publication_gate_passed",
+                actor="governance",
+                data={"plan": plan.id, "work_unit": unit.id},
             )
             issue = self.github.create_issue(
                 unit.repository,
