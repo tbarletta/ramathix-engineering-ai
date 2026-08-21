@@ -1,0 +1,30 @@
+models:
+  reasoner:
+    provider: ollama
+    model: gpt-oss:20b
+    context_window: 16384
+  coder:
+    provider: ollama
+    model: qwen3-coder:30b
+    context_window: 16384
+  utility:
+    provider: ollama
+    model: qwen3:4b
+    context_window: 8192
+
+routes:
+  engineering_manager: reasoner
+  tech_lead: reasoner
+  senior_backend: coder
+  senior_frontend: coder
+  senior_mobile: coder
+  database: reasoner
+  devops_sre: reasoner
+  security: reasoner
+  performance: reasoner
+  qa_testing: coder
+  code_review: reasoner
+  product_business: reasoner
+  cloud_architect: reasoner
+  finops: utility
+  utility: utility
