@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -218,3 +219,25 @@ def test_publication_respects_dependency_order_and_persists_state(tmp_path: Path
     assert reloaded.status == "published"
     assert all(item.state is WorkUnitState.PUBLISHED for item in reloaded.work_units)
     assert published.status == "published"
+
+
+def test_strategic_secret_is_not_persisted_or_published(tmp_path: Path) -> None:
+    github = FakeGitHub()
+    current = workflow(tmp_path, [unit("WU-001")], github=github)
+    secret = "super-sensitive-token-value-123456"
+    plan, _ = current.plan(
+        f"Improve reliability token={secret}",
+        repositories=["tbarletta/example"],
+        constraints=[f"Never expose token={secret}"],
+    )
+
+    serialized = json.dumps(plan.to_dict())
+    assert secret not in serialized
+    assert "REDACTED_SECRET" in serialized
+    assert secret not in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
+
+    current.publish(
+        plan.id,
+        approved_rules={"github-issue-create"},
+    )
+    assert secret not in github.created[0][2]
