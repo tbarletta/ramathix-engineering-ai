@@ -126,6 +126,15 @@ class IncidentSREAgent:
     ) -> IncidentAnalysis:
         target = self.router.resolve(self.role)
         evidence = [item.to_dict() for item in signals]
+        incident = redact_value(
+            {
+                "id": request.incident_id,
+                "title": request.title,
+                "service": request.service,
+                "description": request.description,
+                "started_at": request.started_at,
+            }
+        )
         data = self.model.chat_json(
             model=target.model,
             system=(
@@ -137,16 +146,7 @@ class IncidentSREAgent:
                 "database/queue mutation or any production state change."
             ),
             user=json.dumps(
-                {
-                    "incident": {
-                        "id": request.incident_id,
-                        "title": request.title,
-                        "service": request.service,
-                        "description": request.description,
-                        "started_at": request.started_at,
-                    },
-                    "evidence": evidence,
-                },
+                {"incident": incident, "evidence": evidence},
                 ensure_ascii=False,
                 indent=2,
             ),
