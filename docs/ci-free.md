@@ -47,6 +47,8 @@ Self-hosted runners do not consume GitHub-hosted runner minutes. No Actions arti
 6. Start the runner with the command shown by GitHub, or install it as a service.
 7. Confirm that the runner is shown as **Idle** before expecting PR jobs to execute.
 
+The runner machine must provide Python 3.11+ and Git. The workflow creates its own `.venv-ci` on every job and installs the project development dependencies there.
+
 ## Security rules
 
 - Use the self-hosted runner only for trusted private repositories.
