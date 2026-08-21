@@ -144,6 +144,8 @@ class RepositoryScanner:
         for path in root.rglob("*"):
             if any(part in DEFAULT_IGNORES for part in path.relative_to(root).parts):
                 continue
+            if path.is_symlink():
+                continue
             if path.is_file():
                 files.append(path)
                 if len(files) >= self.max_files:

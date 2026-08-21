@@ -78,3 +78,17 @@ def test_scanner_discovers_python_symbols_and_imports(tmp_path: Path) -> None:
     facts = {(fact.category, fact.name) for fact in inventory.facts}
     assert ("framework", "FastAPI") in facts
     assert ("framework", "SQLAlchemy") in facts
+
+
+def test_scanner_ignores_symlinks_outside_repository(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside-secret.py"
+    outside.write_text("SECRET = 'do-not-read'\n")
+    link = tmp_path / "linked.py"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        return
+
+    inventory = scanner(tmp_path).scan(tmp_path, include_git=False)
+    assert inventory.file_count == 0
+    assert not inventory.symbols
