@@ -88,6 +88,15 @@ def test_low_risk_is_autonomous() -> None:
     assert assessment.decision is GovernanceDecision.AUTONOMOUS
 
 
+def test_marker_matching_does_not_use_arbitrary_substrings() -> None:
+    assessment = RiskEngine().assess(
+        package(text="Update author metadata and discard obsolete documentation."),
+        [],
+    )
+    assert "security-sensitive change" not in assessment.signals
+    assert assessment.risk_level is GovernanceRiskLevel.LOW
+
+
 def test_security_sensitive_change_escalates_declared_medium() -> None:
     assessment = RiskEngine().assess(
         package(risk="medium", text="Change JWT authentication permissions"),
