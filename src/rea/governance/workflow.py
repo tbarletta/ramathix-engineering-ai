@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from ..audit import AuditLog
+from ..domain import Decision
+from ..execution import ExecutionApprovalRequired, ExecutionDenied
 from ..models import ModelRouter
 from ..team import CostApprovalRequired
 from ..team.agents import StructuredModelClient
@@ -12,17 +14,32 @@ from .contracts import GovernanceAssessment, GovernanceDecision
 from .risk import RiskEngine
 
 
-class GovernanceApprovalRequired(RuntimeError):
+class GovernanceApprovalRequired(ExecutionApprovalRequired):
     def __init__(self, required: str, assessment: GovernanceAssessment) -> None:
         self.required = required
         self.assessment = assessment
-        super().__init__(f"governance approval required: {required}")
+        rule_id = (
+            "governance-human"
+            if required == "human"
+            else "governance-tech-lead"
+        )
+        super().__init__(
+            decision=Decision.ASK,
+            rule_id=rule_id,
+            argv=["governance", "approve", required],
+            reason=(
+                f"advanced governance classified risk as {assessment.risk_level.value} "
+                f"with score {assessment.score}"
+            ),
+        )
 
 
-class GovernanceBlocked(RuntimeError):
+class GovernanceBlocked(ExecutionDenied):
     def __init__(self, assessment: GovernanceAssessment) -> None:
         self.assessment = assessment
-        super().__init__("advanced governance blocked execution")
+        super().__init__(
+            "advanced governance blocked execution: production writes remain disabled"
+        )
 
 
 class AdvancedGovernanceWorkflow:
