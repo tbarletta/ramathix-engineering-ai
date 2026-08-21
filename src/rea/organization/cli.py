@@ -5,7 +5,6 @@ import json
 import typer
 
 from ..audit import AuditLog
-from ..cli import app
 from ..config import Settings
 from ..github import GitHubClient
 from ..models import ModelRouter, OllamaClient
@@ -21,7 +20,6 @@ from .workflow import (
 
 
 org_app = typer.Typer(help="AI Engineering Organization and portfolio management")
-app.add_typer(org_app, name="org")
 
 
 @org_app.command("plan")
