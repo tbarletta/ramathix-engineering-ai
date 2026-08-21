@@ -4,7 +4,7 @@
 
 The project intentionally separates **LLM reasoning** from **execution authority**. Models may request actions, but command execution, production access, cost decisions and future merges are controlled by deterministic governance components.
 
-## V0.1
+## V0.1 Foundation
 
 The first milestone provides the safety and runtime foundation:
 
@@ -19,6 +19,31 @@ The first milestone provides the safety and runtime foundation:
 - GitHub PR adapter (draft by default)
 
 See [`docs/architecture/V0.1.md`](docs/architecture/V0.1.md) for the architecture and invariants.
+
+## V0.2 Knowledge Engine
+
+V0.2 adds deterministic repository reverse engineering before any LLM inference. The scanner inventories:
+
+- languages and manifests
+- frameworks and persistence technologies
+- queues and messaging
+- infrastructure and CI/CD
+- tests and API endpoints
+- Python symbols and source import edges
+- governed Git history
+- a dependency graph and multi-repository catalog
+
+```bash
+rea repo scan ../social-media
+rea repo scan ../ramathix-ai-core --json
+rea repo list
+```
+
+Repository inventories are stored under `.rea/knowledge/` by default. Each fact records evidence and confidence. Deterministic findings are `confirmed`; future architecture and business-rule inference must use the explicit `inferred_*` confidence levels rather than being treated as facts.
+
+The AST layer is provider-based. V0.2 ships a Python `ast` provider and a deterministic TypeScript/JavaScript import provider, with a Tree-sitter extension point for additional languages and grammars.
+
+See [`docs/architecture/V0.2.md`](docs/architecture/V0.2.md) for details.
 
 ## Requirements
 
@@ -46,11 +71,13 @@ rea status
 rea models status
 rea policy check "git status"
 rea policy check "terraform apply"
-rea issue analyze 1 --repo tbarletta/ramathix-engineering-ai
+rea issue analyze 2 --repo tbarletta/ramathix-engineering-ai
+rea repo scan ../social-media
+rea repo list
 rea sandbox run "pytest" --workspace . --image python:3.12-slim
 ```
 
-The sandbox has networking disabled by default. A command must be explicitly allowed by `config/policies/commands.yaml` before it can run.
+The sandbox has networking disabled by default. A command must be explicitly allowed by `config/policies/commands.yaml` before it can run. Knowledge-engine subprocesses such as `git log` also go through the same central policy before execution.
 
 ## Model routing
 
@@ -73,7 +100,7 @@ Any decision that may create or increase monetary cost requires human approval, 
 ## Roadmap
 
 - **V0.1 Foundation:** CLI, model routing, sandbox, command policy, audit, GitHub Issue adapter
-- **V0.2 Knowledge:** repository reverse engineering, AST/RAG, Git history, architecture graph
+- **V0.2 Knowledge:** deterministic reverse engineering, AST/import graph, Git history, knowledge catalog
 - **V0.3 First Team:** Engineering Manager, Tech Lead, Senior Developer, Reviewer
 - **V0.4 Level 6:** Issue -> plan -> branch -> implementation -> tests -> review -> draft PR
 - **V0.5 Specialization:** Backend, Frontend, Mobile, Database, DevOps, QA
