@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..governance.redaction import redact_value
 from ..models import ModelRouter
 from ..team.agents import StructuredModelClient
 from .contracts import Initiative, Project, WorkUnit
@@ -36,7 +37,13 @@ ORGANIZATION_PLAN_SCHEMA: dict[str, Any] = {
                     "objective": {"type": "string"},
                     "repository": {"type": "string"},
                 },
-                "required": ["id", "initiative_id", "title", "objective", "repository"],
+                "required": [
+                    "id",
+                    "initiative_id",
+                    "title",
+                    "objective",
+                    "repository",
+                ],
                 "additionalProperties": False,
             },
         },
@@ -51,11 +58,25 @@ ORGANIZATION_PLAN_SCHEMA: dict[str, Any] = {
                     "objective": {"type": "string"},
                     "repository": {"type": "string"},
                     "area": {"type": "string"},
-                    "dependencies": {"type": "array", "items": {"type": "string"}},
-                    "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
-                    "business_value": {"type": "integer", "minimum": 1, "maximum": 5},
+                    "dependencies": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "acceptance_criteria": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "business_value": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 5,
+                    },
                     "urgency": {"type": "integer", "minimum": 1, "maximum": 5},
-                    "strategic_fit": {"type": "integer", "minimum": 1, "maximum": 5},
+                    "strategic_fit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 5,
+                    },
                     "effort": {"type": "integer", "minimum": 1, "maximum": 5},
                     "declared_risk": {
                         "type": "string",
@@ -105,26 +126,32 @@ class AIEngineeringManager:
         constraints: list[str],
     ) -> tuple[list[str], list[Initiative], list[Project], list[WorkUnit]]:
         target = self.router.resolve(self.role)
-        payload = self.model.chat_json(
-            model=target.model,
-            system=(
-                "You are the AI Engineering Manager for Ramathix. Convert a strategic objective "
-                "into a small, executable engineering portfolio. Use only supplied repositories. "
-                "Create stable IDs such as INIT-001, PROJ-001 and WU-001. Work units must be "
-                "independently executable when their dependencies are satisfied. Declare cost "
-                "impact conservatively and flag any production state change. Do not propose paid "
-                "resources merely for convenience. Do not authorize execution or merge."
-            ),
-            user=json.dumps(
-                {
-                    "strategic_goal": strategic_goal,
-                    "repositories": repositories,
-                    "constraints": constraints,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            schema=ORGANIZATION_PLAN_SCHEMA,
+        prompt_payload = redact_value(
+            {
+                "strategic_goal": strategic_goal,
+                "repositories": repositories,
+                "constraints": constraints,
+            }
+        )
+        payload = redact_value(
+            self.model.chat_json(
+                model=target.model,
+                system=(
+                    "You are the AI Engineering Manager for Ramathix. Convert a strategic "
+                    "objective into a small, executable engineering portfolio. Use only supplied "
+                    "repositories. Create stable IDs such as INIT-001, PROJ-001 and WU-001. Work "
+                    "units must be independently executable when dependencies are satisfied. "
+                    "Declare cost impact conservatively and flag any production state change. "
+                    "Do not propose paid resources merely for convenience. Do not authorize "
+                    "execution or merge."
+                ),
+                user=json.dumps(
+                    prompt_payload,
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                schema=ORGANIZATION_PLAN_SCHEMA,
+            )
         )
         return (
             list(payload["constraints"]),
