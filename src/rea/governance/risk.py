@@ -59,14 +59,20 @@ _PERFORMANCE_MARKERS = (
     "index",
     "query performance",
 )
-_PRODUCTION_WRITE_MARKERS = (
-    "production write",
-    "deploy to production",
-    "restart production",
-    "rollback production",
-    "scale production",
-    "reprocess production",
-    "clear production cache",
+_PRODUCTION_CONTEXT_MARKERS = (
+    "production",
+    "prod environment",
+    "prod cluster",
+    "prod database",
+)
+_STATE_CHANGE_MARKERS = (
+    "deploy",
+    "restart",
+    "rollback",
+    "scale",
+    "reprocess",
+    "clear cache",
+    "flush",
     "terraform apply",
     "kubectl apply",
 )
@@ -83,12 +89,13 @@ _COST_MARKERS = (
     "new gpu",
     "additional storage",
     "scale production",
+    "terraform apply",
 )
-_SEVERITY_SCORE = {
+_SEVERITY_FLOOR = {
     GovernanceRiskLevel.LOW: 0,
-    GovernanceRiskLevel.MEDIUM: 5,
-    GovernanceRiskLevel.HIGH: 20,
-    GovernanceRiskLevel.CRITICAL: 40,
+    GovernanceRiskLevel.MEDIUM: 25,
+    GovernanceRiskLevel.HIGH: 50,
+    GovernanceRiskLevel.CRITICAL: 75,
 }
 _DECLARED_RISK_SCORE = {
     "low": 0,
@@ -140,9 +147,15 @@ class RiskEngine:
             signals,
         )
 
-        production_write = any(marker in text for marker in _PRODUCTION_WRITE_MARKERS)
+        production_context = any(
+            marker in text for marker in _PRODUCTION_CONTEXT_MARKERS
+        )
+        state_change = any(marker in text for marker in _STATE_CHANGE_MARKERS)
+        production_write = "production write" in text or (
+            production_context and state_change
+        )
         if production_write:
-            score += 60
+            score = max(score, 100)
             signals.append("production write/state change")
 
         deterministic_cost = any(marker in text for marker in _COST_MARKERS)
@@ -155,9 +168,9 @@ class RiskEngine:
             if assessment.findings:
                 max_severity = max(
                     (item.severity for item in assessment.findings),
-                    key=lambda item: _SEVERITY_SCORE[item],
+                    key=lambda item: _SEVERITY_FLOOR[item],
                 )
-                score += _SEVERITY_SCORE[max_severity]
+                score = max(score, _SEVERITY_FLOOR[max_severity])
             cost_impact = cost_impact or assessment.cost_impact
             production_write = production_write or assessment.production_write
             requires_human = requires_human or assessment.requires_human
