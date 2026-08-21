@@ -79,6 +79,7 @@ class AgentRouter:
             raise RoutingError(
                 f"task {task_id} requests unsupported owner_role: {owner_role}"
             ) from exc
+
         signals = self._file_signals(files)
         if requested is None:
             role, reason = self._infer_role(signals, context)
@@ -88,6 +89,7 @@ class AgentRouter:
             role = requested
             reason = f"Tech Lead owner_role={owner_role}"
             confidence = "explicit"
+
         return AgentAssignment(
             task_id=task_id,
             role=role,
@@ -129,6 +131,7 @@ class AgentRouter:
         for raw in files:
             value = raw.replace("\\", "/").lower()
             name = Path(value).name
+
             if (
                 value.endswith((".kt", ".kts"))
                 or "/android/" in value
@@ -137,14 +140,20 @@ class AgentRouter:
             ):
                 signals.add(SpecialistRole.MOBILE)
                 continue
+
             if (
                 value.endswith((".tsx", ".jsx"))
                 or "/components/" in value
                 or "/pages/" in value
+                or "/hooks/" in value
+                or "/frontend/" in value
+                or "/client/" in value
+                or "/web/" in value
                 or "/app/" in value and value.endswith((".ts", ".tsx"))
             ):
                 signals.add(SpecialistRole.FRONTEND)
                 continue
+
             if (
                 value.endswith(".sql")
                 or "schema.prisma" in value
@@ -154,6 +163,7 @@ class AgentRouter:
             ):
                 signals.add(SpecialistRole.DATABASE)
                 continue
+
             if (
                 name.startswith("dockerfile")
                 or "docker-compose" in name
@@ -166,6 +176,7 @@ class AgentRouter:
             ):
                 signals.add(SpecialistRole.DEVOPS_SRE)
                 continue
+
             if (
                 "/tests/" in value
                 or "/test/" in value
@@ -176,6 +187,7 @@ class AgentRouter:
             ):
                 signals.add(SpecialistRole.QA_TESTING)
                 continue
+
             if value.endswith((".py", ".ts", ".js")):
                 signals.add(SpecialistRole.BACKEND)
         return signals
@@ -188,6 +200,7 @@ class AgentRouter:
         decisive = set(signals)
         if SpecialistRole.QA_TESTING in decisive and len(decisive) > 1:
             decisive.remove(SpecialistRole.QA_TESTING)
+
         if len(decisive) == 1:
             role = next(iter(decisive))
             return role, f"inferred from approved file paths ({role.value})"
@@ -196,6 +209,7 @@ class AgentRouter:
                 "task spans multiple specialist domains; Tech Lead must split it: "
                 + ", ".join(sorted(item.value for item in decisive))
             )
+
         stack_role = self._role_from_context(context)
         if stack_role is not None:
             return stack_role, f"inferred from Knowledge Engine stack ({stack_role.value})"
@@ -215,12 +229,26 @@ class AgentRouter:
                 ),
             ]
         ).lower()
-        if any(marker in haystack for marker in ("jetpack compose", "android", "kotlin")):
-            return SpecialistRole.MOBILE
-        if any(marker in haystack for marker in ("next.js", "nextjs", "react")):
-            return SpecialistRole.FRONTEND
-        if any(marker in haystack for marker in ("nestjs", "fastapi", "node.js", "python")):
-            return SpecialistRole.BACKEND
+
+        candidates: set[SpecialistRole] = set()
+        markers = {
+            SpecialistRole.MOBILE: ("jetpack compose", "android", "kotlin"),
+            SpecialistRole.FRONTEND: ("next.js", "nextjs", "react"),
+            SpecialistRole.BACKEND: ("nestjs", "fastapi", "node.js", "python"),
+            SpecialistRole.DATABASE: ("postgresql", "prisma", "sqlalchemy", "alembic"),
+            SpecialistRole.DEVOPS_SRE: (
+                "docker",
+                "github actions",
+                "nginx",
+                "kubernetes",
+                "terraform",
+            ),
+        }
+        for role, values in markers.items():
+            if any(marker in haystack for marker in values):
+                candidates.add(role)
+        if len(candidates) == 1:
+            return next(iter(candidates))
         return None
 
     @staticmethod
@@ -232,17 +260,12 @@ class AgentRouter:
         decisive = set(signals)
         if SpecialistRole.QA_TESTING in decisive and requested != SpecialistRole.QA_TESTING:
             decisive.remove(SpecialistRole.QA_TESTING)
-        if not decisive or requested in decisive:
-            return
-        compatible_pairs = {
-            frozenset({SpecialistRole.BACKEND, SpecialistRole.DATABASE}),
-            frozenset({SpecialistRole.BACKEND, SpecialistRole.DEVOPS_SRE}),
-        }
-        if all(frozenset({requested, signal}) in compatible_pairs for signal in decisive):
+        if not decisive or decisive == {requested}:
             return
         raise RoutingError(
             f"task {task_id} owner_role={requested.value} is incompatible with file domain(s): "
             + ", ".join(sorted(item.value for item in decisive))
+            + "; Tech Lead must split the task"
         )
 
     @staticmethod
@@ -250,6 +273,7 @@ class AgentRouter:
         by_id = {item.task_id: item for item in assignments}
         if len(by_id) != len(assignments):
             raise RoutingError("duplicate technical task ids")
+
         unknown = {
             dep
             for item in assignments
@@ -260,6 +284,7 @@ class AgentRouter:
             raise RoutingError(
                 "task dependency references unknown id(s): " + ", ".join(sorted(unknown))
             )
+
         remaining = {key: set(item.dependencies) for key, item in by_id.items()}
         ordered: list[AgentAssignment] = []
         emitted: set[str] = set()
