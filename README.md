@@ -132,6 +132,60 @@ rea issue run 123 \
 
 See [`docs/architecture/V0.4.md`](docs/architecture/V0.4.md).
 
+## V0.5 Specialized Engineering Agents
+
+V0.5 routes Tech Lead tasks to specialized agents while preserving the same Level 6 execution
+engine and governance controls:
+
+- Senior Backend
+- Senior Frontend
+- Senior Mobile
+- Database
+- DevOps/SRE
+- QA/Testing
+
+Routing uses explicit `owner_role`, approved file paths and Knowledge Engine evidence. A task that
+spans incompatible specialties is blocked and must be split by the Tech Lead. QA runs as an
+independent gate before Code Review.
+
+```bash
+rea-agents capabilities
+rea-agents route-plan .rea/work/issue-123-plan.json
+```
+
+The primary `rea issue run` path already uses the specialized Level 6 workflow.
+
+See [`docs/architecture/V0.5.md`](docs/architecture/V0.5.md).
+
+## V0.6 Production/SRE Read-Only Diagnostics
+
+V0.6 introduces production incident diagnosis at Level 1–2 without a production write path.
+REA can correlate exported logs, metrics, traces, deployments, read-only state snapshots and
+recent governed Git changes.
+
+```bash
+rea production policy
+rea production inspect \
+  --service payments \
+  --signals ./snapshots/payments.jsonl \
+  --git-repo ../payment-service
+
+rea incident analyze INC-2026-0042 \
+  --service payments \
+  --title "Payment API elevated 5xx" \
+  --signals ./snapshots/payments.jsonl \
+  --signals ./snapshots/deployments.json \
+  --git-repo ../payment-service
+```
+
+The Incident/SRE Agent produces evidence-grounded hypotheses, remediation proposals and preventive
+actions. Restart, scale, deploy, rollback, reprocess, cache/database/queue mutation and other state
+changes remain proposal-only. Cost-bearing remediations require human approval.
+
+Incident artifacts are stored under `.rea/incidents/` as structured JSON and Markdown postmortems.
+
+See [`docs/architecture/V0.6.md`](docs/architecture/V0.6.md).
+
 ## Requirements
 
 - Python 3.11+
@@ -163,12 +217,14 @@ rea repo scan ../social-media
 rea repo list
 rea team plan 123 --repo tbarletta/social-media
 rea team review .rea/work/issue-123-plan.json
+rea-agents capabilities
+rea production policy
 rea sandbox run "pytest" --workspace . --image python:3.12-slim
 ```
 
 The sandbox has networking disabled by default. A command must be explicitly allowed by
-`config/policies/commands.yaml` before execution. Knowledge-engine subprocesses also use the same
-central policy.
+`config/policies/commands.yaml` before execution. Knowledge-engine and Git diagnostic subprocesses
+also use the same central policy.
 
 ## Model routing
 
