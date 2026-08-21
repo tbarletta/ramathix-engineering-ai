@@ -13,6 +13,7 @@ from rea.governance import (
     RiskEngine,
     SpecialistAssessment,
 )
+from rea.governance.agents import SecurityAgent
 from rea.team import CostApprovalRequired
 from rea.team.context import TeamKnowledgeContext
 
@@ -26,6 +27,20 @@ class SafeModel:
     def chat_json(self, **kwargs):
         return {
             "summary": "No additional specialist escalation.",
+            "findings": [],
+            "cost_impact": False,
+            "production_write": False,
+            "requires_human": False,
+        }
+
+
+class SecretEchoModel:
+    def chat_json(self, **kwargs):
+        user = kwargs["user"]
+        assert "sensitive-input-token" not in user
+        assert "REDACTED_SECRET" in user
+        return {
+            "summary": 'token="this-is-a-sensitive-output-token"',
             "findings": [],
             "cost_impact": False,
             "production_write": False,
@@ -103,6 +118,15 @@ def test_specialist_can_raise_but_not_lower_risk() -> None:
     assessment = RiskEngine().assess(package(), [specialist])
     assert assessment.risk_level is GovernanceRiskLevel.CRITICAL
     assert assessment.decision is GovernanceDecision.HUMAN_APPROVAL
+
+
+def test_governance_agent_redacts_prompt_and_output() -> None:
+    assessment = SecurityAgent(FakeRouter(), SecretEchoModel()).assess(
+        work_package=package(text='token="this-is-a-sensitive-input-token"'),
+        context=context(),
+    )
+    assert "sensitive-output-token" not in assessment.summary
+    assert "REDACTED_SECRET" in assessment.summary
 
 
 def test_production_write_is_blocked() -> None:
