@@ -141,7 +141,7 @@ class OrganizationWorkflow:
             )
             issue = self.github.create_issue(
                 unit.repository,
-                title=unit.title,
+                title=f"REA {unit.id}: {unit.title}",
                 body=self._issue_body(plan, unit),
             )
             unit.github_issue = {
@@ -216,8 +216,11 @@ class OrganizationWorkflow:
 
     @staticmethod
     def _validate_structure(repositories, initiatives, projects, work_units) -> None:
+        if not initiatives or not projects or not work_units:
+            raise ValueError("organization plan must contain initiatives, projects and work units")
         initiative_ids = {item.id for item in initiatives}
         project_ids = {item.id for item in projects}
+        projects_by_id = {item.id: item for item in projects}
         allowed_repositories = set(repositories)
         if len(initiative_ids) != len(initiatives):
             raise ValueError("duplicate initiative IDs")
@@ -233,6 +236,11 @@ class OrganizationWorkflow:
                 raise ValueError(f"unknown project for work unit {unit.id}")
             if unit.repository not in allowed_repositories:
                 raise ValueError(f"unapproved repository for work unit {unit.id}")
+            project = projects_by_id[unit.project_id]
+            if unit.repository != project.repository:
+                raise ValueError(
+                    f"work unit {unit.id} repository differs from project {project.id}"
+                )
 
     @staticmethod
     def _require_dependency_publication(
@@ -263,23 +271,27 @@ class OrganizationWorkflow:
     ) -> None:
         if unit.state is WorkUnitState.BLOCKED:
             raise OrganizationBlocked(f"{unit.id} is blocked by governance")
-        decision = str(unit.governance.get("decision", ""))
+
         if unit.state is WorkUnitState.COST_APPROVAL_REQUIRED:
             if unit.id not in cost_approvals:
                 raise CostApprovalRequired(
                     "organization_work_unit",
                     {"work_unit": unit.id, "governance": unit.governance},
                 )
-        if decision == GovernanceDecision.HUMAN_APPROVAL.value:
+
+        risk_level = str(unit.governance.get("risk_level", "medium"))
+        if risk_level == "critical":
             if unit.id not in human_approvals:
                 raise GovernanceUnitApprovalRequired(unit.id, "human")
-        elif decision == GovernanceDecision.TECH_LEAD_APPROVAL.value:
+        elif risk_level == "high":
             if unit.id not in tech_lead_approvals and unit.id not in human_approvals:
                 raise GovernanceUnitApprovalRequired(unit.id, "tech-lead")
 
     @staticmethod
     def _issue_body(plan: OrganizationPlan, unit: WorkUnit) -> str:
-        criteria = "\n".join(f"- {item}" for item in unit.acceptance_criteria) or "- Define in refinement"
+        criteria = "\n".join(
+            f"- {item}" for item in unit.acceptance_criteria
+        ) or "- Define in refinement"
         dependencies = ", ".join(unit.dependencies) or "none"
         return (
             "## REA V1.0 Organizational Work Unit\n\n"
