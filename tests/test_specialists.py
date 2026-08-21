@@ -10,7 +10,7 @@ from rea.specialists.router import (
 from rea.team.context import TeamKnowledgeContext
 
 
-def context() -> TeamKnowledgeContext:
+def context(*facts: str) -> TeamKnowledgeContext:
     return TeamKnowledgeContext(
         repository_name="example",
         repository_root="/workspace/example",
@@ -19,7 +19,10 @@ def context() -> TeamKnowledgeContext:
             "repository": "example",
             "languages": {"TypeScript": 10},
             "manifests": ["package.json"],
-            "facts": [],
+            "facts": [
+                {"name": item, "value": item, "confidence": "confirmed"}
+                for item in facts
+            ],
         },
     )
 
@@ -53,6 +56,20 @@ def test_router_rejects_incompatible_role() -> None:
         )
 
 
+def test_router_requires_tech_lead_split_for_database_file() -> None:
+    with pytest.raises(RoutingError, match="Tech Lead must split"):
+        AgentRouter().route_task(
+            {
+                "id": "mixed-backend-db",
+                "owner_role": "senior_backend",
+                "files": ["src/orders/orders.service.ts", "prisma/schema.prisma"],
+                "dependencies": [],
+            },
+            context=context(),
+            active_repository="tbarletta/example",
+        )
+
+
 def test_router_infers_frontend_for_generic_task() -> None:
     assignment = AgentRouter().route_task(
         {
@@ -66,6 +83,48 @@ def test_router_infers_frontend_for_generic_task() -> None:
     )
     assert assignment.role is SpecialistRole.FRONTEND
     assert assignment.confidence == "inferred"
+
+
+def test_router_infers_frontend_typescript_inside_web_app() -> None:
+    assignment = AgentRouter().route_task(
+        {
+            "id": "web-lib",
+            "owner_role": "senior_developer",
+            "files": ["apps/web/src/lib/api-client.ts"],
+            "dependencies": [],
+        },
+        context=context("React"),
+        active_repository="tbarletta/example",
+    )
+    assert assignment.role is SpecialistRole.FRONTEND
+
+
+def test_router_does_not_guess_when_repository_stack_is_ambiguous() -> None:
+    ambiguous = TeamKnowledgeContext(
+        repository_name="example",
+        repository_root="/workspace/example",
+        inventory={},
+        compact={
+            "repository": "example",
+            "languages": {"TypeScript": 10},
+            "manifests": ["package.json"],
+            "facts": [
+                {"name": "React", "value": "React", "confidence": "confirmed"},
+                {"name": "NestJS", "value": "NestJS", "confidence": "confirmed"},
+            ],
+        },
+    )
+    with pytest.raises(RoutingError, match="unable to infer specialist"):
+        AgentRouter().route_task(
+            {
+                "id": "ambiguous",
+                "owner_role": "senior_developer",
+                "files": [],
+                "dependencies": [],
+            },
+            context=ambiguous,
+            active_repository="tbarletta/example",
+        )
 
 
 def test_router_respects_dependencies() -> None:
