@@ -7,6 +7,7 @@ from ..level6.coding import (
     MutationBoundaryError,
     SeniorDeveloperExecutionAgent,
     SourceCodeReviewerAgent,
+    _reject_secret_content,
 )
 from ..level6.contracts import CodingIteration, FileMutation
 from ..level6.workflow import Level6Workflow as BaseLevel6Workflow
@@ -49,6 +50,15 @@ class RoutedSeniorDeveloperExecutionAgent:
             )
         except RoutingError as exc:
             raise MutationBoundaryError(f"specialist routing blocked: {exc}") from exc
+
+        self.audit.write(
+            "specialist.routing",
+            actor="agent_router",
+            data={
+                "active_repository": active_repository,
+                "assignments": [item.to_dict() for item in assignments],
+            },
+        )
         return assignments
 
     def implement(
@@ -67,6 +77,7 @@ class RoutedSeniorDeveloperExecutionAgent:
                 source_files=source_files,
                 feedback=feedback,
             )
+
         tasks = {
             str(item.get("id")): item
             for item in work_package.get("technical_plan", {}).get("tasks", [])
@@ -87,15 +98,25 @@ class RoutedSeniorDeveloperExecutionAgent:
                 {"path": item.path, "action": item.action, "content": item.content}
                 for item in changes
             ]
-            coding = self.specialist.implement(
-                assignment=assignment,
-                task=task,
-                work_package=work_package,
-                context=context,
-                source_files=task_source,
-                feedback=feedback,
-                upstream_changes=upstream,
-            )
+            try:
+                coding = self.specialist.implement(
+                    assignment=assignment,
+                    task=task,
+                    work_package=work_package,
+                    context=context,
+                    source_files=task_source,
+                    feedback=feedback,
+                    upstream_changes=upstream,
+                )
+            except RoutingError as exc:
+                raise MutationBoundaryError(
+                    f"specialist execution blocked for task {assignment.task_id}: {exc}"
+                ) from exc
+
+            for mutation in coding.changes:
+                if mutation.content is not None:
+                    _reject_secret_content(mutation.content)
+
             summaries.append(f"{assignment.role.value}: {coding.summary}")
             changes.extend(coding.changes)
             for command in coding.commands:
