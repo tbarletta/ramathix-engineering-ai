@@ -7,11 +7,13 @@ from .workflow import (
 )
 from .workspace import WorkspaceBoundaryError
 from ..specialists.integration import SpecializedLevel6Workflow
+from ..governance.integration import GovernedLevel6Workflow
 
-Level6Workflow = SpecializedLevel6Workflow
+Level6Workflow = GovernedLevel6Workflow
 
 __all__ = [
     "BaseLevel6Workflow",
+    "GovernedLevel6Workflow",
     "IterationLimitExceeded",
     "Level6ArtifactStore",
     "Level6Result",
