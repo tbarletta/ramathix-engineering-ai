@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          set -o pipefail
+          python -m pip install -e '.[dev]' 2>&1 | tee ci-install.log
+
+      - name: Ruff
+        if: always()
+        run: |
+          set -o pipefail
+          ruff check . 2>&1 | tee ci-ruff.log
+
+      - name: Pytest
+        if: always()
+        run: |
+          set -o pipefail
+          pytest -q 2>&1 | tee ci-pytest.log
+
+      - name: Upload CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics
+          path: |
+            ci-install.log
+            ci-ruff.log
+            ci-pytest.log
+          if-no-files-found: ignore
+          retention-days: 3

@@ -1,0 +1,68 @@
+default: ask
+rules:
+  - id: git-read
+    decision: allow
+    prefixes:
+      - ["git", "status"]
+      - ["git", "diff"]
+      - ["git", "log"]
+      - ["git", "show"]
+      - ["git", "branch", "--show-current"]
+
+  - id: git-safe-write
+    decision: allow
+    prefixes:
+      - ["git", "checkout", "-b"]
+      - ["git", "switch", "-c"]
+      - ["git", "worktree", "add"]
+      - ["git", "add", "--"]
+      - ["git", "commit"]
+
+  - id: tests-and-quality
+    decision: allow
+    prefixes:
+      - ["npm", "test"]
+      - ["npm", "run", "test"]
+      - ["npm", "run", "lint"]
+      - ["npm", "run", "build"]
+      - ["pytest"]
+      - ["python", "-m", "pytest"]
+      - ["ruff", "check"]
+      - ["mypy"]
+      - ["gradle", "test"]
+      - ["./gradlew", "test"]
+
+  - id: docker-safe
+    decision: allow
+    prefixes:
+      - ["docker", "build"]
+      - ["docker", "compose", "config"]
+
+  - id: network-and-publish
+    decision: ask
+    prefixes:
+      - ["git", "push"]
+      - ["npm", "install"]
+      - ["pip", "install"]
+      - ["curl"]
+      - ["wget"]
+
+  - id: cost-sensitive
+    decision: cost_approval
+    prefixes:
+      - ["terraform", "apply"]
+      - ["pulumi", "up"]
+      - ["aws", "ec2", "run-instances"]
+      - ["aws", "rds", "create-db-instance"]
+      - ["gcloud", "compute", "instances", "create"]
+      - ["az", "vm", "create"]
+
+  - id: destructive
+    decision: deny
+    prefixes:
+      - ["sudo"]
+      - ["shutdown"]
+      - ["reboot"]
+      - ["rm", "-rf", "/"]
+      - ["kubectl", "delete"]
+      - ["docker", "system", "prune"]
