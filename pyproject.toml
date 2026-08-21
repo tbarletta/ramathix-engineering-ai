@@ -38,4 +38,4 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = ["typer.Option", "typer.Argument"]
+extend-immutable-calls = ["typer.Option", "typer.Argument", "pathlib.Path"]
