@@ -13,6 +13,7 @@ from .contracts import (
     RootCauseHypothesis,
     TimelineEvent,
 )
+from .redaction import redact_value
 
 
 INCIDENT_SCHEMA = {
@@ -97,6 +98,18 @@ _WRITE_MARKERS = (
     "deploy",
     "rollback",
 )
+_COST_MARKERS = (
+    "scale",
+    "provision",
+    "increase capacity",
+    "larger instance",
+    "bigger instance",
+    "upgrade plan",
+    "increase replicas",
+    "add replicas",
+    "purchase",
+    "paid service",
+)
 
 
 class IncidentSREAgent:
@@ -139,7 +152,8 @@ class IncidentSREAgent:
             ),
             schema=INCIDENT_SCHEMA,
         )
-        return self._validate(request, signals, data)
+        sanitized = redact_value(data)
+        return self._validate(request, signals, sanitized)
 
     def _validate(
         self,
@@ -167,12 +181,14 @@ class IncidentSREAgent:
         remediations = []
         for item in data["remediations"]:
             action = item["action"]
-            inferred_write = any(marker in action.lower() for marker in _WRITE_MARKERS)
+            lowered = action.lower()
+            inferred_write = any(marker in lowered for marker in _WRITE_MARKERS)
+            inferred_cost = any(marker in lowered for marker in _COST_MARKERS)
             remediations.append(
                 RemediationProposal(
                     action=action,
                     risk_level=item["risk_level"],
-                    cost_impact=bool(item["cost_impact"]),
+                    cost_impact=bool(item["cost_impact"]) or inferred_cost,
                     requires_write=bool(item["requires_write"]) or inferred_write,
                 )
             )
