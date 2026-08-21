@@ -9,6 +9,7 @@ class ProductionCapability(StrEnum):
     METRICS_READ = "metrics_read"
     TRACES_READ = "traces_read"
     DEPLOYMENTS_READ = "deployments_read"
+    SOURCE_READ = "source_read"
     DATABASE_READ = "database_read"
     QUEUE_READ = "queue_read"
     INFRASTRUCTURE_READ = "infrastructure_read"
