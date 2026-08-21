@@ -1,7 +1,17 @@
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from rea.audit import AuditLog
 from rea.production.agent import IncidentSREAgent
-from rea.production.contracts import IncidentRequest, ProductionSignal, SignalKind
+from rea.production.contracts import (
+    IncidentAnalysis,
+    IncidentRequest,
+    ProductionSignal,
+    SignalKind,
+)
+from rea.production.workflow import IncidentStore, IncidentWorkflow
 
 
 class FakeRouter:
@@ -89,3 +99,58 @@ def test_model_output_is_redacted_before_becoming_analysis() -> None:
     assert "sensitive-output-token" not in analysis.impact_summary
     assert "sensitive-output-value" not in analysis.preventive_actions[0]
     assert "REDACTED_SECRET" in analysis.impact_summary
+
+
+def test_store_rejects_path_traversal_incident_id(tmp_path: Path) -> None:
+    unsafe = IncidentRequest(
+        incident_id="../../escape",
+        title="Unsafe",
+        service="payments",
+        description="Unsafe identifier",
+    )
+    analysis = IncidentAnalysis(
+        incident_id=unsafe.incident_id,
+        service=unsafe.service,
+        impact_summary="None",
+    )
+    with pytest.raises(ValueError, match="incident_id"):
+        IncidentStore(tmp_path / "incidents").save(unsafe, [], analysis)
+    assert not (tmp_path / "escape.json").exists()
+
+
+class StaticProvider:
+    def collect(self, incident):
+        return evidence()
+
+
+class RequestRedactionModel:
+    def chat_json(self, **kwargs):
+        user = kwargs["user"]
+        assert "sensitive-request-token" not in user
+        assert "REDACTED_SECRET" in user
+        return {
+            "impact_summary": "No confirmed impact",
+            "timeline": [],
+            "hypotheses": [],
+            "remediations": [],
+            "preventive_actions": [],
+        }
+
+
+def test_request_secrets_are_redacted_before_prompt_and_artifacts(tmp_path: Path) -> None:
+    secret_request = IncidentRequest(
+        incident_id="INC-REQUEST-SECRET",
+        title="Credential appeared in incident input",
+        service="payments",
+        description='token="this-is-a-sensitive-request-token"',
+    )
+    workflow = IncidentWorkflow(
+        provider=StaticProvider(),
+        agent=IncidentSREAgent(FakeRouter(), RequestRedactionModel()),
+        store=IncidentStore(tmp_path / "incidents"),
+        audit=AuditLog(tmp_path / "audit.jsonl"),
+    )
+    _, json_path, md_path = workflow.analyze(secret_request)
+    assert "sensitive-request-token" not in json_path.read_text(encoding="utf-8")
+    assert "sensitive-request-token" not in md_path.read_text(encoding="utf-8")
+    assert "sensitive-request-token" not in (tmp_path / "audit.jsonl").read_text(encoding="utf-8")
