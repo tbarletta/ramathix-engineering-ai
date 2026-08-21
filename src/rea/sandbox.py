@@ -23,7 +23,17 @@ class PolicyViolation(RuntimeError):
 
 
 class ApprovalRequired(RuntimeError):
-    pass
+    def __init__(
+        self,
+        decision: Decision,
+        *,
+        rule_id: str | None,
+        argv: Sequence[str],
+    ) -> None:
+        super().__init__(decision.value)
+        self.decision = decision
+        self.rule_id = rule_id
+        self.argv = tuple(argv)
 
 
 class DockerSandbox:
@@ -38,7 +48,9 @@ class DockerSandbox:
         workspace: Path,
         argv: Sequence[str],
         network: bool = False,
+        approved_rules: set[str] | None = None,
     ) -> ExecutionResult:
+        approved_rules = approved_rules or set()
         policy_result = self.policy.evaluate(argv)
         self.audit.write(
             "command.policy",
@@ -52,14 +64,29 @@ class DockerSandbox:
 
         if policy_result.decision == Decision.DENY:
             raise PolicyViolation(policy_result.reason)
-        if policy_result.decision in {Decision.ASK, Decision.COST_APPROVAL}:
-            raise ApprovalRequired(policy_result.decision.value)
+        if policy_result.decision == Decision.COST_APPROVAL:
+            raise ApprovalRequired(
+                policy_result.decision,
+                rule_id=policy_result.rule_id,
+                argv=argv,
+            )
+        if (
+            policy_result.decision == Decision.ASK
+            and policy_result.rule_id not in approved_rules
+        ):
+            raise ApprovalRequired(
+                policy_result.decision,
+                rule_id=policy_result.rule_id,
+                argv=argv,
+            )
 
         workspace = workspace.resolve()
         docker_command = [
             "docker",
             "run",
             "--rm",
+            "--pull",
+            "never",
             "--workdir",
             "/workspace",
             "--mount",

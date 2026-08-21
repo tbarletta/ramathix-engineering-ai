@@ -66,18 +66,71 @@ Senior Developer
 ```
 
 The team consumes GitHub Issues and V0.2 knowledge. It creates structured work packages and
-independent reviews, but **does not edit code or execute developer-proposed commands yet**.
+independent reviews, but does not edit code or execute developer-proposed commands.
 
 ```bash
 rea team plan 123 --repo tbarletta/social-media
 rea team review .rea/work/issue-123-plan.json
 ```
 
-A Senior Developer proposal includes candidate commands, but each command is only classified by
-the deterministic policy engine. Cost impact at any agent stage stops the workflow and requires
-human approval.
-
 See [`docs/architecture/V0.3.md`](docs/architecture/V0.3.md).
+
+## V0.4 Level 6
+
+V0.4 is the first governed autonomous Issue-to-PR workflow:
+
+```text
+Issue
+  -> knowledge refresh
+  -> Engineering Manager
+  -> Tech Lead
+  -> isolated worktree
+  -> Senior Developer edits
+  -> sandboxed tests
+  -> independent source review
+  -> correction loop
+  -> commit
+  -> approved push
+  -> draft PR
+```
+
+Example:
+
+```bash
+rea issue run 123 \
+  --repo tbarletta/social-media \
+  --workspace ../social-media \
+  --base master \
+  --approve-rule git-push
+```
+
+Important V0.4 controls:
+
+- the base branch is never edited directly
+- only file paths approved by the technical plan may be changed
+- `.env`, private keys and credential paths are blocked
+- credential-like source content is redacted before model prompts
+- generated hard-coded secrets are rejected before staging
+- Docker networking is disabled by default and images are never auto-pulled
+- `ASK` requires explicit `--approve-rule`
+- `COST_APPROVAL` always requires a human and cannot be auto-approved
+- Reviewer `request_changes` returns to the Developer
+- the correction loop is bounded
+- pull requests are always draft
+- merge remains a human-controlled operation
+
+For dependency installation, both the rule and network must be explicitly enabled:
+
+```bash
+rea issue run 123 \
+  --repo tbarletta/social-media \
+  --workspace ../social-media \
+  --approve-rule git-push \
+  --approve-rule dependency-install \
+  --allow-network
+```
+
+See [`docs/architecture/V0.4.md`](docs/architecture/V0.4.md).
 
 ## Requirements
 
@@ -86,6 +139,7 @@ See [`docs/architecture/V0.3.md`](docs/architecture/V0.3.md).
 - Ollama
 - Git
 - GitHub token for private repository issue access
+- pre-pulled Docker images for the target project
 
 ## Install
 

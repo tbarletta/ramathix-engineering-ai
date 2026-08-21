@@ -8,6 +8,7 @@ rules:
       - ["git", "log"]
       - ["git", "show"]
       - ["git", "branch", "--show-current"]
+      - ["git", "branch", "--list"]
 
   - id: git-safe-write
     decision: allow
@@ -15,6 +16,7 @@ rules:
       - ["git", "checkout", "-b"]
       - ["git", "switch", "-c"]
       - ["git", "worktree", "add"]
+      - ["git", "worktree", "remove", "--force"]
       - ["git", "add", "--"]
       - ["git", "commit"]
 
@@ -31,6 +33,8 @@ rules:
       - ["mypy"]
       - ["gradle", "test"]
       - ["./gradlew", "test"]
+      - ["./gradlew", "lint"]
+      - ["./gradlew", "assembleDebug"]
 
   - id: docker-safe
     decision: allow
@@ -38,12 +42,22 @@ rules:
       - ["docker", "build"]
       - ["docker", "compose", "config"]
 
-  - id: network-and-publish
+  - id: git-push
     decision: ask
     prefixes:
       - ["git", "push"]
+
+  - id: dependency-install
+    decision: ask
+    prefixes:
       - ["npm", "install"]
+      - ["npm", "ci"]
       - ["pip", "install"]
+      - ["python", "-m", "pip", "install"]
+
+  - id: network-fetch
+    decision: ask
+    prefixes:
       - ["curl"]
       - ["wget"]
 
