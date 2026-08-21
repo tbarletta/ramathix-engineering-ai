@@ -14,7 +14,10 @@ class GitHubClient:
         self.base_url = base_url.rstrip("/")
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         return headers
@@ -51,8 +54,49 @@ class GitHubClient:
         response = httpx.post(
             f"{self.base_url}/repos/{repository}/pulls",
             headers=self._headers(),
-            json={"title": title, "body": body, "head": head, "base": base, "draft": draft},
+            json={
+                "title": title,
+                "body": body,
+                "head": head,
+                "base": base,
+                "draft": draft,
+            },
             timeout=30.0,
         )
         response.raise_for_status()
         return response.json()
+
+    def ensure_pull_request(
+        self,
+        repository: str,
+        *,
+        title: str,
+        body: str,
+        head: str,
+        base: str,
+        draft: bool = True,
+    ) -> dict[str, Any]:
+        owner = repository.split("/", 1)[0]
+        response = httpx.get(
+            f"{self.base_url}/repos/{repository}/pulls",
+            headers=self._headers(),
+            params={
+                "state": "open",
+                "head": f"{owner}:{head}",
+                "base": base,
+                "per_page": 10,
+            },
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        matches = response.json()
+        if matches:
+            return matches[0]
+        return self.create_pull_request(
+            repository,
+            title=title,
+            body=body,
+            head=head,
+            base=base,
+            draft=draft,
+        )

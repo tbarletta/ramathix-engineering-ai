@@ -14,6 +14,7 @@ class Settings:
     model_config: Path
     knowledge_path: Path
     work_path: Path
+    worktree_path: Path
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -31,4 +32,5 @@ class Settings:
             model_config=resolve_path("REA_MODEL_CONFIG", "config/models.yaml"),
             knowledge_path=resolve_path("REA_KNOWLEDGE_PATH", ".rea/knowledge"),
             work_path=resolve_path("REA_WORK_PATH", ".rea/work"),
+            worktree_path=resolve_path("REA_WORKTREE_PATH", ".rea/worktrees"),
         )
