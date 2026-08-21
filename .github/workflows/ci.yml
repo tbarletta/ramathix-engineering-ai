@@ -2,44 +2,41 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  validate:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Verify runner
         run: |
-          set -o pipefail
-          python -m pip install -e '.[dev]' 2>&1 | tee ci-install.log
+          python3 --version
+          git --version
 
-      - name: Ruff
-        if: always()
+      - name: Create isolated environment
         run: |
-          set -o pipefail
-          ruff check . 2>&1 | tee ci-ruff.log
+          python3 -m venv .venv-ci
+          .venv-ci/bin/python -m pip install --upgrade pip
+          .venv-ci/bin/python -m pip install -e '.[dev]'
 
-      - name: Pytest
-        if: always()
-        run: |
-          set -o pipefail
-          pytest -q 2>&1 | tee ci-pytest.log
+      - name: Validate
+        run: .venv-ci/bin/python scripts/validate.py
 
-      - name: Upload CI diagnostics
+      - name: Cleanup
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-diagnostics
-          path: |
-            ci-install.log
-            ci-ruff.log
-            ci-pytest.log
-          if-no-files-found: ignore
-          retention-days: 3
+        run: python3 -c "import shutil; shutil.rmtree('.venv-ci', ignore_errors=True)"
