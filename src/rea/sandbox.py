@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 from .audit import AuditLog
 from .domain import Decision
@@ -43,7 +43,11 @@ class DockerSandbox:
         self.audit.write(
             "command.policy",
             actor="sandbox",
-            data={"argv": list(argv), "decision": policy_result.decision, "rule": policy_result.rule_id},
+            data={
+                "argv": list(argv),
+                "decision": policy_result.decision,
+                "rule": policy_result.rule_id,
+            },
         )
 
         if policy_result.decision == Decision.DENY:

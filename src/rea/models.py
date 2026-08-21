@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +43,9 @@ class OllamaClient:
         response.raise_for_status()
         return {item["name"] for item in response.json().get("models", [])}
 
-    def chat_json(self, *, model: str, system: str, user: str, schema: dict[str, Any]) -> dict[str, Any]:
+    def chat_json(
+        self, *, model: str, system: str, user: str, schema: dict[str, Any]
+    ) -> dict[str, Any]:
         payload = {
             "model": model,
             "stream": False,
@@ -55,6 +58,4 @@ class OllamaClient:
         response = httpx.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout)
         response.raise_for_status()
         content = response.json()["message"]["content"]
-        import json
-
         return json.loads(content)

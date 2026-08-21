@@ -53,7 +53,11 @@ def policy_check(command: str) -> None:
     policy = CommandPolicy.from_yaml(settings.command_policy)
     argv = DockerSandbox.parse(command)
     result = policy.evaluate(argv)
-    typer.echo(json.dumps({"decision": result.decision, "rule": result.rule_id, "reason": result.reason}))
+    typer.echo(
+        json.dumps(
+            {"decision": result.decision, "rule": result.rule_id, "reason": result.reason}
+        )
+    )
 
 
 @issue_app.command("analyze")
@@ -61,7 +65,11 @@ def issue_analyze(number: int, repo: str = typer.Option(..., "--repo")) -> None:
     settings = Settings.from_env()
     audit = AuditLog(settings.audit_path)
     issue = GitHubClient().get_issue(repo, number)
-    audit.write("issue.loaded", actor="github", data={"repo": repo, "issue": number, "title": issue.title})
+    audit.write(
+        "issue.loaded",
+        actor="github",
+        data={"repo": repo, "issue": number, "title": issue.title},
+    )
 
     router = ModelRouter.from_yaml(settings.model_config)
     plan = TechLeadAgent(router, OllamaClient(settings.ollama_url)).analyze(issue)
@@ -86,7 +94,12 @@ def sandbox_run(
     settings = Settings.from_env()
     policy = CommandPolicy.from_yaml(settings.command_policy)
     sandbox = DockerSandbox(policy, AuditLog(settings.audit_path))
-    result = sandbox.run(image=image, workspace=workspace, argv=sandbox.parse(command), network=network)
+    result = sandbox.run(
+        image=image,
+        workspace=workspace,
+        argv=sandbox.parse(command),
+        network=network,
+    )
     if result.stdout:
         typer.echo(result.stdout, nl=False)
     if result.stderr:

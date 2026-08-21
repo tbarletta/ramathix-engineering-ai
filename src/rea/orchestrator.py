@@ -33,7 +33,12 @@ class TechLeadAgent:
             f"Repository: {issue.repository}\nIssue: #{issue.number} {issue.title}\n"
             f"Labels: {', '.join(issue.labels)}\n\n{issue.body}"
         )
-        data = self.ollama.chat_json(model=target.model, system=system, user=user, schema=TECH_LEAD_SCHEMA)
+        data = self.ollama.chat_json(
+            model=target.model,
+            system=system,
+            user=user,
+            schema=TECH_LEAD_SCHEMA,
+        )
         return TechLeadPlan(
             summary=data["summary"],
             affected_areas=list(data["affected_areas"]),
