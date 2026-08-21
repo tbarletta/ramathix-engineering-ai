@@ -8,11 +8,17 @@ import typer
 from ..audit import AuditLog
 from ..cli import app
 from ..config import Settings
+from ..execution import GovernedLocalRunner
 from ..models import ModelRouter, OllamaClient
+from ..policy import CommandPolicy
 from .agent import IncidentSREAgent
 from .contracts import IncidentRequest
 from .policy import ProductionReadPolicy
-from .providers import CompositeSignalProvider, JsonFileSignalProvider
+from .providers import (
+    CompositeSignalProvider,
+    GitHistorySignalProvider,
+    JsonFileSignalProvider,
+)
 from .workflow import IncidentStore, IncidentWorkflow
 
 
@@ -31,9 +37,10 @@ def production_policy() -> None:
 def production_inspect(
     service: str = typer.Option(..., "--service"),
     signals: list[Path] = typer.Option([], "--signals"),
+    git_repo: Path | None = typer.Option(None, "--git-repo"),
 ) -> None:
     settings = Settings.from_env()
-    workflow = _workflow(settings, signals)
+    workflow = _workflow(settings, signals, git_repo=git_repo)
     request = IncidentRequest(
         incident_id="inspection",
         title=f"Production inspection: {service}",
@@ -57,9 +64,10 @@ def incident_analyze(
     description: str = typer.Option("", "--description"),
     started_at: str | None = typer.Option(None, "--started-at"),
     signals: list[Path] = typer.Option([], "--signals"),
+    git_repo: Path | None = typer.Option(None, "--git-repo"),
 ) -> None:
     settings = Settings.from_env()
-    workflow = _workflow(settings, signals)
+    workflow = _workflow(settings, signals, git_repo=git_repo)
     request = IncidentRequest(
         incident_id=incident_id,
         title=title,
@@ -75,23 +83,40 @@ def incident_analyze(
     typer.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
-def _workflow(settings: Settings, signal_paths: list[Path]) -> IncidentWorkflow:
-    if not signal_paths:
-        raise typer.BadParameter("at least one --signals JSON/JSONL snapshot is required")
+def _workflow(
+    settings: Settings,
+    signal_paths: list[Path],
+    *,
+    git_repo: Path | None,
+) -> IncidentWorkflow:
+    if not signal_paths and git_repo is None:
+        raise typer.BadParameter(
+            "provide at least one --signals snapshot or a --git-repo"
+        )
+
     policy = ProductionReadPolicy()
-    provider = CompositeSignalProvider(
-        [
-            JsonFileSignalProvider(path, policy=policy)
-            for path in signal_paths
-        ]
-    )
+    audit = AuditLog(settings.audit_path)
+    providers = [
+        JsonFileSignalProvider(path, policy=policy)
+        for path in signal_paths
+    ]
+    if git_repo is not None:
+        command_policy = CommandPolicy.from_yaml(settings.command_policy)
+        providers.append(
+            GitHistorySignalProvider(
+                git_repo,
+                policy=policy,
+                runner=GovernedLocalRunner(command_policy, audit),
+            )
+        )
+
     router = ModelRouter.from_yaml(settings.model_config)
     model = OllamaClient(settings.ollama_url)
     return IncidentWorkflow(
-        provider=provider,
+        provider=CompositeSignalProvider(providers),
         agent=IncidentSREAgent(router, model),
         store=IncidentStore(settings.home / ".rea" / "incidents"),
-        audit=AuditLog(settings.audit_path),
+        audit=audit,
     )
 
 
