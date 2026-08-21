@@ -12,7 +12,7 @@ from rea.production.policy import (
     ProductionReadPolicy,
     ProductionWriteDenied,
 )
-from rea.production.providers import JsonFileSignalProvider
+from rea.production.providers import GitHistorySignalProvider, JsonFileSignalProvider
 from rea.production.redaction import redact_text
 from rea.production.workflow import IncidentStore, IncidentWorkflow
 
@@ -29,6 +29,7 @@ def request() -> IncidentRequest:
 def test_production_policy_never_allows_write() -> None:
     policy = ProductionReadPolicy()
     policy.authorize(ProductionCapability.LOGS_READ)
+    policy.authorize(ProductionCapability.SOURCE_READ)
     with pytest.raises(ProductionWriteDenied):
         policy.authorize(ProductionCapability.DATABASE_READ, write=True)
 
@@ -61,6 +62,46 @@ def test_json_provider_filters_service(tmp_path: Path) -> None:
         policy=ProductionReadPolicy(),
     ).collect(request())
     assert [item.evidence_id for item in signals] == ["log-1"]
+
+
+class FakeGitRunner:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def run(self, argv, **kwargs):
+        self.calls.append(tuple(argv))
+        if argv[:2] == ["git", "log"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "abcdef1234567890\x1f2026-08-21T17:59:00+00:00\x1f"
+                    "fix provider timeout\n"
+                ),
+                stderr="",
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout="src/payments/provider.py\ntests/test_provider.py\n",
+            stderr="",
+        )
+
+
+def test_git_provider_adds_governed_change_evidence(tmp_path: Path) -> None:
+    runner = FakeGitRunner()
+    signals = GitHistorySignalProvider(
+        tmp_path,
+        policy=ProductionReadPolicy(),
+        runner=runner,
+    ).collect(request())
+    assert len(signals) == 1
+    assert signals[0].kind is SignalKind.GIT_CHANGE
+    assert signals[0].attributes["sha"] == "abcdef1234567890"
+    assert signals[0].attributes["files"] == [
+        "src/payments/provider.py",
+        "tests/test_provider.py",
+    ]
+    assert runner.calls[0][:2] == ("git", "log")
+    assert runner.calls[1][:2] == ("git", "show")
 
 
 def test_redaction_removes_credentials() -> None:
@@ -133,6 +174,21 @@ def test_incident_agent_marks_write_remediation_deterministically() -> None:
     )
     assert analysis.hypotheses[0].confidence == "high"
     assert analysis.remediations[0].requires_write is True
+
+
+class UnknownEvidenceModel(FakeModel):
+    def chat_json(self, **kwargs):
+        data = super().chat_json(**kwargs)
+        data["hypotheses"][0]["evidence_ids"] = ["invented-evidence"]
+        return data
+
+
+def test_incident_agent_rejects_invented_evidence() -> None:
+    with pytest.raises(ValueError, match="unknown evidence IDs"):
+        IncidentSREAgent(FakeRouter(), UnknownEvidenceModel()).analyze(
+            request(),
+            evidence(),
+        )
 
 
 class FakeProvider:
