@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from .. import __version__
 from ..audit import AuditLog
 from ..cli import app
 from ..config import Settings
@@ -26,6 +27,29 @@ incident_app = typer.Typer(help="Read-only production incident analysis")
 production_app = typer.Typer(help="Read-only production inspection and policy")
 app.add_typer(incident_app, name="incident")
 app.add_typer(production_app, name="production")
+
+
+def _status_current() -> None:
+    settings = Settings.from_env()
+    typer.echo(f"Ramathix Engineering AI V{__version__}")
+    typer.echo(f"home: {settings.home}")
+    typer.echo(f"ollama: {settings.ollama_url}")
+    typer.echo(f"policy: {settings.command_policy}")
+    typer.echo(f"audit: {settings.audit_path}")
+    typer.echo(f"knowledge: {settings.knowledge_path}")
+    typer.echo(f"work: {settings.work_path}")
+    typer.echo(f"worktrees: {settings.worktree_path}")
+
+
+def _replace_status_callback() -> None:
+    for command in app.registered_commands:
+        callback = getattr(command, "callback", None)
+        if getattr(callback, "__name__", "") == "status":
+            command.callback = _status_current
+            return
+
+
+_replace_status_callback()
 
 
 @production_app.command("policy")
