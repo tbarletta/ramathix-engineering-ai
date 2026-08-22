@@ -9,6 +9,9 @@ rules:
       - ["git", "show"]
       - ["git", "branch", "--show-current"]
       - ["git", "branch", "--list"]
+      - ["git", "branch", "-a"]
+      - ["git", "tag"]
+      - ["git", "remote", "-v"]
 
   - id: git-safe-write
     decision: allow
@@ -46,6 +49,33 @@ rules:
     decision: ask
     prefixes:
       - ["git", "push"]
+
+  - id: git-clone
+    decision: ask
+    prefixes:
+      - ["git", "clone"]
+
+  - id: git-checkout
+    decision: ask
+    prefixes:
+      - ["git", "checkout"]
+      - ["git", "switch"]
+
+  - id: git-sync
+    decision: ask
+    prefixes:
+      - ["git", "pull"]
+      - ["git", "fetch"]
+
+  - id: git-merge
+    decision: ask
+    prefixes:
+      - ["git", "merge"]
+
+  - id: git-stash
+    decision: ask
+    prefixes:
+      - ["git", "stash"]
 
   - id: dependency-install
     decision: ask

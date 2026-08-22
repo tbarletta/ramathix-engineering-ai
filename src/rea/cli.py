@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import tempfile
+from collections.abc import Callable
 from configparser import ConfigParser
 from pathlib import Path
 from typing import NoReturn
@@ -10,9 +14,15 @@ import typer
 from .audit import AuditLog
 from .config import Settings
 from .conversation import ConversationAssistant, ConversationError
-from .conversation_actions import ConversationActionController
-from .execution import ExecutionApprovalRequired, ExecutionDenied
-from .github import GitHubClient
+from .conversation_actions import (
+    INTENT_CLASSIFIER_SYSTEM_PROMPT,
+    INTENT_SCHEMA,
+    CloneOutcome,
+    ConversationActionController,
+)
+from .domain import Decision
+from .execution import ExecutionApprovalRequired, ExecutionDenied, GovernedLocalRunner
+from .github import GitHubClient, parse_github_slug
 from .initialization import compact_knowledge, discover_repository_roots, map_repository
 from .knowledge import JsonKnowledgeStore, RepositoryScanner
 from .level6 import (
@@ -104,16 +114,25 @@ def initialize(
     typer.echo(json.dumps({"mapped": mapped}, ensure_ascii=False, indent=2))
 
 
+class _WorkspaceState:
+    """Mutable pointer to the directory REA is currently operating on.
+
+    Cloning a repository mid-session moves this from an empty starting directory to the
+    freshly cloned checkout, so every closure below must re-read `.root` at call time.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+
 def _run_conversation() -> None:
     settings = Settings.from_env()
-    root = Path.cwd()
-    knowledge = _initialize_current_repository(settings)
-    assistant = ConversationAssistant(
-        router=ModelRouter.from_yaml(settings.model_config),
-        model=OllamaClient(settings.ollama_url),
-        knowledge=knowledge,
-    )
-    actions = _conversation_actions(settings, root, knowledge)
+    workspace = _WorkspaceState(Path.cwd())
+    knowledge = _initialize_current_repository(settings, workspace.root)
+    router = ModelRouter.from_yaml(settings.model_config)
+    model = OllamaClient(settings.ollama_url)
+    assistant = ConversationAssistant(router=router, model=model, knowledge=knowledge)
+    actions = _conversation_actions(settings, workspace, assistant, router, model)
     typer.echo("Ramathix Engineering AI — sessão conversacional local")
     typer.echo(
         "Digite /exit para encerrar. Roadmaps, Issues e execução Level 6 são governados; "
@@ -153,19 +172,20 @@ def _run_conversation() -> None:
 
 def _conversation_actions(
     settings: Settings,
-    root: Path,
-    knowledge: dict | None,
+    workspace: _WorkspaceState,
+    assistant: ConversationAssistant,
+    router: ModelRouter,
+    model: OllamaClient,
 ) -> ConversationActionController:
-    repository = _github_repository(root)
-    return ConversationActionController(
+    actions = ConversationActionController(
         workflow=_organization_workflow(settings, with_github=True),
-        repository=repository,
-        constraints=_roadmap_constraints(knowledge),
+        repository=_github_repository(workspace.root),
+        constraints=_roadmap_constraints(assistant.knowledge),
         execute_issue=lambda number: _run_level6_issue(
             settings,
             number=number,
-            repository=repository or "",
-            workspace=root,
+            repository=_github_repository(workspace.root) or "",
+            workspace=workspace.root,
             base="main",
             knowledge_repo=None,
             image=None,
@@ -173,7 +193,157 @@ def _conversation_actions(
             allow_network=False,
             max_iterations=3,
         ),
+        classify_intent=_build_intent_classifier(router, model),
     )
+    actions.clone_repository = lambda slug: _clone_repository_action(
+        settings, workspace, assistant, actions, slug
+    )
+    actions.preview_clone_target = lambda slug: str(_clone_target(workspace.root, slug))
+    actions.preview_git_command = lambda argv: _preview_git_command(settings, argv)
+    actions.run_git_command = lambda argv, rule_id: _run_git_command_action(
+        settings, workspace, argv, rule_id
+    )
+    return actions
+
+
+def _build_intent_classifier(
+    router: ModelRouter, model: OllamaClient
+) -> Callable[[str, str | None], dict[str, object]]:
+    def classify(message: str, repository: str | None) -> dict[str, object]:
+        target = router.resolve("utility")
+        state = (
+            f"Repositório local já clonado nesta sessão: `{repository}`."
+            if repository
+            else "Nenhum repositório clonado ainda nesta sessão."
+        )
+        return model.chat_json(
+            model=target.model,
+            system=INTENT_CLASSIFIER_SYSTEM_PROMPT,
+            user=f"{state}\n\nMensagem do usuário: {message}",
+            schema=INTENT_SCHEMA,
+        )
+
+    return classify
+
+
+def _preview_git_command(settings: Settings, argv: list[str]) -> tuple[str, str | None]:
+    policy = CommandPolicy.from_yaml(settings.command_policy)
+    result = policy.evaluate(argv)
+    return result.decision.value, result.rule_id
+
+
+def _run_git_command_action(
+    settings: Settings,
+    workspace: _WorkspaceState,
+    argv: list[str],
+    rule_id: str | None,
+) -> str:
+    # Deliberately does not go through GovernedLocalRunner.run(): most git subcommands have
+    # no dedicated policy rule (rule_id is None, decision falls to the "ask" default), and
+    # GovernedLocalRunner can only ever be pre-approved via a named rule id. The chat layer
+    # already showed this exact command and required an explicit `/aprovar` before calling
+    # here, so that IS the approval — this just re-checks DENY/cost_approval defensively and
+    # logs the same audit events GovernedLocalRunner would.
+    policy = CommandPolicy.from_yaml(settings.command_policy)
+    audit = AuditLog(settings.audit_path)
+    policy_result = policy.evaluate(argv)
+    audit.write(
+        "command.policy_checked",
+        actor="conversation_action_controller",
+        data={"argv": argv, "decision": policy_result.decision, "rule": policy_result.rule_id},
+    )
+    if policy_result.decision is Decision.DENY:
+        raise RuntimeError(policy_result.reason)
+    if policy_result.decision is Decision.COST_APPROVAL:
+        raise RuntimeError("esta operação exige aprovação de custo e não é suportada por aqui")
+
+    completed = subprocess.run(
+        argv,
+        cwd=workspace.root,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    audit.write(
+        "command.executed",
+        actor="conversation_action_controller",
+        data={"argv": argv, "returncode": completed.returncode},
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            completed.stderr.strip() or completed.stdout.strip() or "comando git falhou"
+        )
+    return completed.stdout or completed.stderr
+
+
+def _clone_repository_action(
+    settings: Settings,
+    workspace: _WorkspaceState,
+    assistant: ConversationAssistant,
+    actions: ConversationActionController,
+    slug: str,
+) -> CloneOutcome:
+    policy = CommandPolicy.from_yaml(settings.command_policy)
+    audit = AuditLog(settings.audit_path)
+    runner = GovernedLocalRunner(policy, audit)
+    target = _clone_target(workspace.root, slug)
+    if target != workspace.root and target.exists() and any(target.iterdir()):
+        raise RuntimeError(f"o diretório {target} já existe e não está vazio")
+
+    # Clone into an isolated temp dir rather than straight into `target`: `git clone`
+    # refuses any non-empty destination, and REA's own `.rea/` bookkeeping folder (plus
+    # whatever the governed runner's audit log recreates mid-call) already lives there.
+    with tempfile.TemporaryDirectory(prefix="rea-clone-") as tmp:
+        staging = Path(tmp) / "checkout"
+        result = runner.run(
+            ["git", "clone", f"https://github.com/{slug}.git", str(staging)],
+            cwd=workspace.root,
+            approved_rules={"git-clone"},
+            timeout=300,
+            actor="conversation_action_controller",
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "git clone falhou")
+
+        target.mkdir(parents=True, exist_ok=True)
+        for item in staging.iterdir():
+            destination_item = target / item.name
+            if destination_item.exists():
+                raise RuntimeError(
+                    f"não foi possível mover `{item.name}` para `{target}`: já existe"
+                )
+            shutil.move(str(item), str(destination_item))
+
+    inventory, _saved = map_repository(
+        target,
+        policy=policy,
+        audit=audit,
+        store=JsonKnowledgeStore(settings.knowledge_path),
+        include_git=True,
+    )
+    workspace.root = target
+    assistant.knowledge = compact_knowledge(inventory)
+    actions.constraints = _roadmap_constraints(assistant.knowledge)
+    return CloneOutcome(
+        target=str(target),
+        files=inventory.file_count,
+        facts=len(inventory.facts),
+        symbols=len(inventory.symbols),
+    )
+
+
+def _clone_target(root: Path, slug: str) -> Path:
+    name = slug.rstrip("/").split("/")[-1]
+    if _is_effectively_empty(root):
+        return root
+    return root / name
+
+
+def _is_effectively_empty(path: Path) -> bool:
+    if not path.exists():
+        return True
+    return not any(item.name != ".rea" for item in path.iterdir())
 
 
 def _roadmap_constraints(knowledge: dict | None) -> list[str]:
@@ -208,8 +378,7 @@ def _roadmap_constraints(knowledge: dict | None) -> list[str]:
     ]
 
 
-def _initialize_current_repository(settings: Settings) -> dict | None:
-    root = Path.cwd()
+def _initialize_current_repository(settings: Settings, root: Path) -> dict | None:
     inventory, saved = map_repository(
         root,
         policy=CommandPolicy.from_yaml(settings.command_policy),
@@ -591,22 +760,7 @@ def _github_repository(root: Path) -> str | None:
     parser.read(config_path, encoding="utf-8")
     remote = parser['remote "origin"'] if parser.has_section('remote "origin"') else {}
     url = remote.get("url", "")
-    return _github_slug(url)
-
-
-def _github_slug(url: str) -> str | None:
-    value = url.strip().rstrip("/")
-    if "github.com:" in value:
-        value = value.split("github.com:", maxsplit=1)[1]
-    elif "github.com/" in value:
-        value = value.split("github.com/", maxsplit=1)[1]
-    else:
-        return None
-    slug = value.removesuffix(".git")
-    parts = slug.split("/")
-    if len(parts) != 2 or not all(parts):
-        return None
-    return slug
+    return parse_github_slug(url)
 
 
 def _level6_workflow(settings: Settings, github: GitHubClient) -> Level6Workflow:

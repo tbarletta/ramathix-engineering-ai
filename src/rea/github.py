@@ -1,11 +1,39 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 import httpx
 
 from .domain import IssueWorkUnit
+
+_GITHUB_TOKEN_PATTERN = re.compile(r"[^\s()<>\[\]{}]*github\.com[^\s()<>\[\]{}]*", re.IGNORECASE)
+
+
+def parse_github_slug(url: str) -> str | None:
+    """Extract an ``owner/repo`` slug from a GitHub URL or SSH remote."""
+    value = url.strip().rstrip("/")
+    if "github.com:" in value:
+        value = value.split("github.com:", maxsplit=1)[1]
+    elif "github.com/" in value:
+        value = value.split("github.com/", maxsplit=1)[1]
+    else:
+        return None
+    slug = value.removesuffix(".git")
+    parts = slug.split("/")
+    if len(parts) != 2 or not all(parts):
+        return None
+    return "/".join(parts)
+
+
+def extract_github_reference(message: str) -> str | None:
+    """Find the first ``owner/repo`` slug mentioned as a github.com link in free text."""
+    for token in _GITHUB_TOKEN_PATTERN.findall(message):
+        slug = parse_github_slug(token.strip(".,;:'\""))
+        if slug:
+            return slug
+    return None
 
 
 class GitHubClient:

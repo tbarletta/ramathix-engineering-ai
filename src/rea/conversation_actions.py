@@ -7,8 +7,82 @@ from typing import Any, Protocol
 
 import httpx
 
+from .github import extract_github_reference
 from .organization import OrganizationPlan, WorkUnit, WorkUnitState
 from .team import CostApprovalRequired
+
+INTENT_CLASSIFIER_SYSTEM_PROMPT = (
+    "Você é o classificador de intenção do Ramathix Engineering AI (REA). Você recebe o "
+    "estado atual da sessão (se já há um repositório clonado localmente) e a última mensagem "
+    'do usuário; classifique a mensagem. Use "clone_repository" quando ainda NÃO há '
+    "repositório local e o usuário pedir para baixar, clonar, obter, puxar, trazer, importar "
+    'ou começar a trabalhar localmente em um repositório GitHub. Use "git_command" quando JÁ '
+    "há um repositório local e o pedido for qualquer operação do Git sobre esse repositório: "
+    "trocar de branch, ver status, histórico, diferenças, listar branches/tags/remotes, pull, "
+    "fetch, merge, rebase, cherry-pick, revert, reset, stash, criar ou apagar branch/tag, "
+    'commit, add, push, etc. — literalmente qualquer comando "git ...". Nesse caso preencha '
+    '"git_argv" com a lista completa de argumentos do comando, sempre começando com "git" '
+    '(ex.: ["git", "pull"], ["git", "checkout", "nome-da-branch"], '
+    '["git", "log", "--oneline", "-10"]). Traduza o pedido do usuário para o comando Git '
+    'real e completo que o realiza — não simplifique nem invente uma versão genérica. Use '
+    '"create_roadmap" quando pedir um roadmap, plano de melhorias ou plano de ação '
+    'executável. Use "execute_phase" quando pedir para implementar ou executar uma fase '
+    'específica de um plano já existente. Use "none" para qualquer outra coisa, incluindo '
+    'perguntas, dúvidas ou conversa livre. Preencha "repository" apenas se a mensagem citar '
+    'um repositório de forma explícita, "phase" apenas se citar um número de fase, e '
+    '"git_argv" apenas para "git_command"; caso contrário deixe os campos nulos. Nunca '
+    "invente um repositório, uma fase ou uma branch/ref que o usuário não tenha citado."
+)
+
+INTENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "intent": {
+            "type": "string",
+            "enum": [
+                "clone_repository",
+                "create_roadmap",
+                "execute_phase",
+                "git_command",
+                "none",
+            ],
+        },
+        "repository": {"type": ["string", "null"]},
+        "phase": {"type": ["integer", "null"]},
+        "git_argv": {"type": ["array", "null"], "items": {"type": "string"}},
+    },
+    "required": ["intent", "repository", "phase", "git_argv"],
+}
+
+_HIGH_RISK_GIT_MARKERS: tuple[tuple[str, ...], ...] = (
+    ("reset", "--hard"),
+    ("clean", "-f"),
+    ("clean", "-fd"),
+    ("clean", "-fdx"),
+    ("clean", "-d", "-f"),
+    ("push", "--force"),
+    ("push", "-f"),
+    ("push", "--force-with-lease"),
+    ("branch", "-D"),
+    ("rebase",),
+    ("checkout", "--force"),
+    ("checkout", "-f"),
+    ("filter-branch",),
+)
+
+
+def is_high_risk_git_command(argv: list[str]) -> bool:
+    """Best-effort heuristic to add an extra warning before a well-known destructive op.
+
+    This never blocks anything — every git operation still runs once the user approves the
+    exact command shown to them; this only makes the risk more visible beforehand.
+    """
+    rest = argv[1:]
+    for marker in _HIGH_RISK_GIT_MARKERS:
+        head, *flags = marker
+        if head in rest and all(flag in rest for flag in flags):
+            return True
+    return False
 
 
 class ConversationPlanner(Protocol):
@@ -46,7 +120,26 @@ class PendingExecution:
     issue_number: int
 
 
-PendingAction = PendingPublication | PendingExecution
+@dataclass(frozen=True)
+class PendingClone:
+    repository: str
+
+
+@dataclass(frozen=True)
+class PendingGitCommand:
+    argv: tuple[str, ...]
+    rule_id: str | None
+
+
+PendingAction = PendingPublication | PendingExecution | PendingClone | PendingGitCommand
+
+
+@dataclass(frozen=True)
+class CloneOutcome:
+    target: str
+    files: int
+    facts: int
+    symbols: int
 
 
 class ConversationActionController:
@@ -59,15 +152,29 @@ class ConversationActionController:
         repository: str | None,
         constraints: list[str],
         execute_issue: Callable[[int], Any],
+        clone_repository: Callable[[str], CloneOutcome] | None = None,
+        preview_clone_target: Callable[[str], str] | None = None,
+        classify_intent: Callable[[str, str | None], dict[str, Any]] | None = None,
+        preview_git_command: Callable[[list[str]], tuple[str, str | None]] | None = None,
+        run_git_command: Callable[[list[str], str | None], str] | None = None,
     ) -> None:
         self.workflow = workflow
         self.repository = repository
         self.constraints = constraints
         self.execute_issue = execute_issue
+        self.clone_repository = clone_repository
+        self.preview_clone_target = preview_clone_target
+        self.classify_intent = classify_intent
+        self.preview_git_command = preview_git_command
+        self.run_git_command = run_git_command
         self.plan: OrganizationPlan | None = None
         self.pending: PendingAction | None = None
+        self.mentioned_repository: str | None = repository
 
     def handle(self, message: str) -> str | None:
+        reference = extract_github_reference(message)
+        if reference:
+            self.mentioned_repository = reference
         normalized = " ".join(message.casefold().split())
         if normalized in {"/ajuda", "/help"}:
             return self._help()
@@ -82,12 +189,79 @@ class ConversationActionController:
             return self._use_plan(match.group(1))
         if match := re.fullmatch(r"/executar\s+([\w-]+)", normalized):
             return self._prepare_execution(match.group(1).upper())
+        if _is_clone_request(normalized) and self.repository is None:
+            return self._prepare_clone(reference or self.mentioned_repository)
         if _is_roadmap_request(normalized):
             return self._create_roadmap(message)
         if match := re.search(r"\bfase\s*(\d+)\b", normalized):
             if _is_execution_request(normalized):
                 return self._prepare_phase(int(match.group(1)))
+        return self._route_conversational_intent(message)
+
+    def _route_conversational_intent(self, message: str) -> str | None:
+        """Fall back to the local model to understand phrasing the fast heuristics miss."""
+        if self.classify_intent is None:
+            return None
+        try:
+            raw = self.classify_intent(message, self.repository)
+        except (httpx.HTTPError, ValueError, RuntimeError, KeyError):
+            return None
+        intent = _validate_intent(raw)
+        if intent is None:
+            return None
+
+        kind = intent.get("intent")
+        if kind == "clone_repository":
+            reference = intent.get("repository") or self.mentioned_repository
+            return self._prepare_clone(reference)
+        if kind == "create_roadmap":
+            return self._create_roadmap(message)
+        if kind == "execute_phase":
+            phase = intent.get("phase")
+            if not isinstance(phase, int):
+                return None
+            return self._prepare_phase(phase)
+        if kind == "git_command":
+            argv = intent.get("git_argv")
+            if (
+                not isinstance(argv, list)
+                or not argv
+                or not all(isinstance(item, str) for item in argv)
+                or argv[0] != "git"
+            ):
+                return None
+            return self._prepare_git_command(argv)
         return None
+
+    def _prepare_git_command(self, argv: list[str]) -> str:
+        if self.run_git_command is None or self.preview_git_command is None:
+            return "Operações Git diretas não estão disponíveis nesta sessão."
+        command_text = " ".join(argv)
+        decision, rule_id = self.preview_git_command(argv)
+        if decision == "deny":
+            return f"O comando `{command_text}` é bloqueado pela política de comandos do REA."
+        if decision == "allow":
+            try:
+                output = self.run_git_command(argv, rule_id)
+            except PermissionError as exc:
+                return f"Execução bloqueada por aprovação adicional: {exc}"
+            except (RuntimeError, OSError, ValueError) as exc:
+                return f"Não foi possível executar `{command_text}`: {exc}"
+            return _render_git_output(command_text, output)
+
+        warning = ""
+        if is_high_risk_git_command(argv):
+            warning = (
+                "\n\n⚠️ Este comando pode descartar trabalho não commitado ou reescrever "
+                "histórico de forma irreversível."
+            )
+        self.pending = PendingGitCommand(argv=tuple(argv), rule_id=rule_id)
+        return (
+            f"## Comando Git preparado: `{command_text}`\n\n"
+            "Esta operação altera o estado do repositório local, então pede confirmação "
+            f"antes de rodar.{warning}\n\n"
+            "Digite `/aprovar` para executar ou `/cancelar` para abortar."
+        )
 
     def _create_roadmap(self, request: str) -> str:
         if not self.repository:
@@ -218,9 +392,64 @@ class ConversationActionController:
             "Digite `/aprovar` para iniciar ou `/cancelar` para abortar."
         )
 
+    def _prepare_clone(self, reference: str | None) -> str:
+        if not reference:
+            return (
+                "Para clonar, preciso da URL ou do `owner/repositorio` do GitHub. Ex.: "
+                "`https://github.com/owner/repo`."
+            )
+        if self.clone_repository is None:
+            return "A clonagem de repositórios não está disponível nesta sessão."
+        target_hint = ""
+        if self.preview_clone_target is not None:
+            target_hint = f" em `{self.preview_clone_target(reference)}`"
+        self.pending = PendingClone(repository=reference)
+        return (
+            f"## Clonagem preparada: `{reference}`\n\n"
+            f"A próxima ação executará `git clone` deste repositório{target_hint}. Nenhum "
+            "arquivo foi baixado ainda.\n\n"
+            "Digite `/aprovar` para clonar ou `/cancelar` para abortar."
+        )
+
     def _approve(self) -> str:
         if self.pending is None:
             return "Não há nenhuma ação pendente para aprovar."
+        if isinstance(self.pending, PendingGitCommand):
+            pending = self.pending
+            assert self.run_git_command is not None
+            command_text = " ".join(pending.argv)
+            try:
+                output = self.run_git_command(list(pending.argv), pending.rule_id)
+            except PermissionError as exc:
+                return f"Execução bloqueada por aprovação adicional: {exc}"
+            except (RuntimeError, OSError, ValueError) as exc:
+                return f"Não foi possível executar `{command_text}`: {exc}"
+            self.pending = None
+            return _render_git_output(command_text, output)
+        if isinstance(self.pending, PendingClone):
+            pending = self.pending
+            assert self.clone_repository is not None
+            try:
+                outcome = self.clone_repository(pending.repository)
+            except httpx.HTTPError:
+                return (
+                    "Não foi possível clonar o repositório. Verifique a conectividade e tente "
+                    "novamente; nenhuma alteração local foi feita."
+                )
+            except (RuntimeError, OSError, ValueError) as exc:
+                return f"Não foi possível clonar o repositório: {exc}"
+
+            self.pending = None
+            self.repository = pending.repository
+            self.mentioned_repository = pending.repository
+            return (
+                f"## Repositório clonado: `{pending.repository}`\n\n"
+                f"Local: `{outcome.target}`.\n"
+                f"Mapeado: {outcome.files} arquivos, {outcome.facts} fatos, "
+                f"{outcome.symbols} símbolos.\n\n"
+                "Já posso analisar este repositório. Peça um roadmap de melhorias quando "
+                "quiser planejar o próximo passo."
+            )
         if isinstance(self.pending, PendingPublication):
             pending = self.pending
             try:
@@ -293,13 +522,38 @@ class ConversationActionController:
     def _help() -> str:
         return (
             "Comandos conversacionais:\n"
+            "- peça para clonar/baixar um repositório do GitHub (cole o link) para trabalhar "
+            "nele localmente;\n"
+            "- com um repositório já clonado, peça qualquer operação Git sobre ele (trocar de "
+            "branch, pull, fetch, merge, rebase, stash, reset, status, log, diff, criar/apagar "
+            "branch ou tag, commit, push etc.) — o REA traduz para o comando `git` real;\n"
             "- peça um roadmap de melhorias para criar um plano executável;\n"
             "- `implemente a fase 1` prepara as Issues da fase;\n"
             "- `/usar org-AAAA...` retoma um plano persistido;\n"
             "- `/aprovar` confirma a ação pendente;\n"
             "- `/executar WU-001` prepara a execução Level 6 de uma Issue publicada;\n"
-            "- `/status` mostra o estado da sessão; `/cancelar` descarta a ação pendente."
+            "- `/status` mostra o estado da sessão; `/cancelar` descarta a ação pendente.\n\n"
+            "Frases fora desses padrões também são entendidas: o REA interpreta o pedido "
+            "conversacionalmente e prepara a mesma ação governada quando reconhece a intenção. "
+            "Comandos que só leem o repositório rodam na hora; qualquer comando que altere o "
+            "estado do repositório (inclusive operações irreversíveis, se você pedir "
+            "explicitamente) mostra o comando exato e pede `/aprovar` antes de rodar."
         )
+
+
+def _is_clone_request(message: str) -> bool:
+    return any(
+        word in message
+        for word in (
+            "clonar",
+            "clone",
+            "clonagem",
+            "baixar",
+            "baixe",
+            "baixa o",
+            "baixa localmente",
+        )
+    )
 
 
 def _is_roadmap_request(message: str) -> bool:
@@ -310,6 +564,25 @@ def _is_roadmap_request(message: str) -> bool:
 
 def _is_execution_request(message: str) -> bool:
     return any(word in message for word in ("implemente", "implementar", "execute", "executar"))
+
+
+def _validate_intent(data: Any) -> dict[str, Any] | None:
+    if not isinstance(data, dict):
+        return None
+    if data.get("intent") not in {
+        "clone_repository",
+        "create_roadmap",
+        "execute_phase",
+        "git_command",
+        "none",
+    }:
+        return None
+    return data
+
+
+def _render_git_output(command_text: str, output: str) -> str:
+    body = output.strip() or "(sem saída)"
+    return f"## `{command_text}` executado\n\n```\n{body}\n```"
 
 
 def _roadmap_goal(request: str) -> str:

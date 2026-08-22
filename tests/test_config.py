@@ -41,7 +41,7 @@ def test_conversation_initializes_code_inventory_without_git_repository(
     monkeypatch.chdir(tmp_path)
     (tmp_path / "app.py").write_text("def run():\n    return 1\n", encoding="utf-8")
 
-    knowledge = _initialize_current_repository(Settings.from_env())
+    knowledge = _initialize_current_repository(Settings.from_env(), tmp_path)
 
     assert knowledge is not None
     assert knowledge["repository"] == tmp_path.name
