@@ -142,7 +142,13 @@ class AIEngineeringManager:
                     "units must be independently executable when dependencies are satisfied. "
                     "Declare cost impact conservatively and flag any production state change. "
                     "Do not propose paid resources merely for convenience. Do not authorize "
-                    "execution or merge."
+                    "execution or merge. Write all human-facing values in Brazilian Portuguese. "
+                    "Treat constraints as factual evidence: never claim a library, test suite, "
+                    "coverage level or operational capability exists unless it was supplied. "
+                    "Capabilities marked as confirmed are the current baseline, not missing work: "
+                    "never propose installing, configuring again or recreating them without a "
+                    "specific evidenced gap. For a broad improvement request, begin with a small "
+                    "measurement work unit and make subsequent changes depend on its result."
                 ),
                 user=json.dumps(
                     prompt_payload,

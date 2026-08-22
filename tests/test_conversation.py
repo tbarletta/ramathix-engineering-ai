@@ -74,3 +74,14 @@ def test_project_analysis_uses_deterministic_repository_dossier() -> None:
     assert "src/demo" in response
     assert "3 arquivos de código, 1 classe e 4 funções" in response
     assert model.calls == []
+
+
+def test_conversation_remembers_governed_controller_outcomes() -> None:
+    model = FakeConversationModel()
+    assistant = ConversationAssistant(ModelRouter.from_yaml(CONFIG), model)
+
+    assistant.remember("/aprovar", "Issues publicadas: WU-001 → #42")
+    assistant.reply("Qual foi o resultado da ação?")
+
+    messages = model.calls[0]["messages"]
+    assert {"role": "assistant", "content": "Issues publicadas: WU-001 → #42"} in messages

@@ -215,11 +215,32 @@ rea
 ```
 
 The session uses the local Ollama runtime, preserves context for the current terminal session and
-is advisory by default. It responds in Brazilian Portuguese; type `/exit` to close it. It cannot
-create Issues, pull requests, paid resources or production changes without the existing explicit governance approvals. `rea chat` is
-an explicit equivalent. When started inside a Git repository, REA refreshes the deterministic
-Knowledge Engine inventory before opening the conversation and passes a bounded factual summary
-to the assistant.
+responds in Brazilian Portuguese; type `/exit` to close it. When started inside a Git repository,
+REA refreshes the deterministic Knowledge Engine inventory before opening the conversation and
+passes a bounded factual summary to the assistant.
+
+Roadmap requests are converted into a persisted engineering portfolio. The conversation never
+claims that work was implemented when it was only planned: the user explicitly approves each
+external transition before it occurs.
+
+```text
+você> Vamos criar um roadmap de melhorias
+REA> ... plano org-... com fases e unidades de trabalho
+
+você> implemente a fase 1
+REA> ... Issues que serão publicadas; digite /aprovar
+
+você> /aprovar
+REA> ... Issues publicadas; escolha /executar WU-001
+
+você> /executar WU-001
+REA> ... Level 6 preparado; digite /aprovar
+```
+
+The second approval can create an isolated worktree, run validations, commit, push a branch and
+open a Draft PR through Level 6. Cost and production-write gates remain independent and cannot be
+approved by this flow. Use `/status`, `/cancelar`, `/ajuda`, and `/usar <plan-id>` to inspect,
+cancel, get help, or resume a persisted plan.
 
 Map a repository explicitly, or discover all Git repositories under a workspace:
 
