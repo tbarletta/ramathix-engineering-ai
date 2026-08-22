@@ -109,21 +109,22 @@ def _run_conversation() -> None:
         model=OllamaClient(settings.ollama_url),
         knowledge=knowledge,
     )
-    typer.echo("Ramathix Engineering AI — local conversational session")
+    typer.echo("Ramathix Engineering AI — sessão conversacional local")
     typer.echo(
-        "Type /exit to close. This chat plans and advises; governed actions require approval.\n"
+        "Digite /exit para encerrar. Este chat planeja e orienta; ações governadas exigem "
+        "aprovação.\n"
     )
 
     try:
         while True:
             try:
-                message = input("you> ").strip()
+                message = input("você> ").strip()
             except EOFError:
-                typer.echo("\nSession closed.")
+                typer.echo("\nSessão encerrada.")
                 return
 
             if message.lower() in {"/exit", "/quit", "exit", "quit"}:
-                typer.echo("Session closed.")
+                typer.echo("Sessão encerrada.")
                 return
             if not message:
                 continue
@@ -138,13 +139,16 @@ def _run_conversation() -> None:
                 continue
             typer.echo(f"\nREA> {reply}\n")
     except KeyboardInterrupt:
-        typer.echo("\nSession closed.")
+        typer.echo("\nSessão encerrada.")
 
 
 def _initialize_current_repository(settings: Settings) -> dict | None:
     root = Path.cwd()
     if not (root / ".git").exists():
-        typer.echo("No Git repository found in the current directory; chat has no repo inventory.")
+        typer.echo(
+            "Nenhum repositório Git foi encontrado no diretório atual; o chat não possui "
+            "inventário do repositório."
+        )
         return None
 
     inventory, saved = map_repository(
@@ -154,10 +158,10 @@ def _initialize_current_repository(settings: Settings) -> dict | None:
         store=JsonKnowledgeStore(settings.knowledge_path),
     )
     typer.echo(
-        "Mapped "
-        f"{inventory.name}: {inventory.file_count} files, {len(inventory.facts)} facts, "
-        f"{len(inventory.symbols)} symbols.\n"
-        f"Knowledge saved to {saved}."
+        "Mapeado "
+        f"{inventory.name}: {inventory.file_count} arquivos, {len(inventory.facts)} fatos, "
+        f"{len(inventory.symbols)} símbolos.\n"
+        f"Conhecimento salvo em {saved}."
     )
     return compact_knowledge(inventory)
 

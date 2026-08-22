@@ -42,10 +42,11 @@ class ConversationAssistant:
             response = redact_text(self.model.chat(model=target.model, messages=messages))
         except httpx.HTTPError as exc:
             raise ConversationError(
-                "Ollama is unavailable. Start the local service and verify `rea models status`."
+                "O Ollama não está disponível. Inicie o serviço local e verifique "
+                "`rea models status`."
             ) from exc
         except ValueError as exc:
-            raise ConversationError("The local model did not return a usable response.") from exc
+            raise ConversationError("O modelo local não retornou uma resposta utilizável.") from exc
 
         self.history.extend(
             [
@@ -58,7 +59,8 @@ class ConversationAssistant:
     def _system_prompt(self) -> str:
         prompt = (
             "You are Ramathix Engineering AI, a local-first conversational engineering "
-            "assistant. Answer in the user's language. Help clarify strategic goals, analyze "
+            "assistant. Always answer in Brazilian Portuguese, regardless of the user's "
+            "language. Help clarify strategic goals, analyze "
             "engineering trade-offs, propose governed plans and explain REA capabilities. "
             "Never claim that you created issues, pull requests, deployments, purchases or "
             "production changes from this chat. Those actions remain subject to explicit REA "
