@@ -56,6 +56,7 @@ DEFAULT_IGNORES = {
     "coverage",
     "__pycache__",
     ".pytest_cache",
+    ".rea",
     ".mypy_cache",
     ".ruff_cache",
 }

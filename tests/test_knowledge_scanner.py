@@ -118,3 +118,15 @@ def test_scanner_ignores_symlinks_outside_repository(tmp_path: Path) -> None:
     inventory = scanner(tmp_path).scan(tmp_path, include_git=False)
     assert inventory.file_count == 0
     assert not inventory.symbols
+
+
+def test_scanner_ignores_its_own_runtime_artifacts(tmp_path: Path) -> None:
+    generated = tmp_path / ".rea" / "knowledge"
+    generated.mkdir(parents=True)
+    (generated / "inventory.py").write_text("SECRET = 'generated'\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+
+    inventory = scanner(tmp_path).scan(tmp_path, include_git=False)
+
+    assert inventory.file_count == 1
+    assert {symbol.name for symbol in inventory.symbols} == {"run"}
