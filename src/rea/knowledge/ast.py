@@ -42,8 +42,10 @@ class PythonAstProvider:
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     result.dependencies.append(_import_edge(relative, alias.name))
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                result.dependencies.append(_import_edge(relative, node.module))
+            elif isinstance(node, ast.ImportFrom):
+                target = "." * node.level + (node.module or "")
+                if target:
+                    result.dependencies.append(_import_edge(relative, target))
         return result
 
 

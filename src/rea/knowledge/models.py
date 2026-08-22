@@ -76,6 +76,7 @@ class RepositoryInventory:
     facts: list[KnowledgeFact] = field(default_factory=list)
     dependencies: list[DependencyEdge] = field(default_factory=list)
     symbols: list[SourceSymbol] = field(default_factory=list)
+    architecture: dict[str, Any] = field(default_factory=dict)
     git: GitSummary = field(default_factory=GitSummary)
     warnings: list[str] = field(default_factory=list)
 

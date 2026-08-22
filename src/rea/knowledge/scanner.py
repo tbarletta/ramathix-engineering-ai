@@ -18,6 +18,7 @@ from .analyzers import (
     TestAnalyzer,
     unique_facts,
 )
+from .architecture import summarize_architecture
 from .ast import AstProvider, PythonAstProvider, TypeScriptImportProvider
 from .git import GitHistoryAnalyzer
 from .models import RepositoryInventory
@@ -119,6 +120,7 @@ class RepositoryScanner:
         inventory.dependencies = _unique_dependencies(inventory.dependencies)
         inventory.symbols.sort(key=lambda item: (item.path, item.line, item.name))
         inventory.warnings = sorted(set(inventory.warnings))
+        inventory.architecture = summarize_architecture(root, files, inventory)
 
         if include_git and (root / ".git").exists():
             inventory.git = GitHistoryAnalyzer(

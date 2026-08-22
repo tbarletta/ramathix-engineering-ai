@@ -2,7 +2,12 @@ from pathlib import Path
 
 from rea.audit import AuditLog
 from rea.domain import Decision
-from rea.initialization import compact_knowledge, discover_repository_roots, map_repository
+from rea.initialization import (
+    compact_knowledge,
+    discover_repository_roots,
+    map_repository,
+    render_project_analysis,
+)
 from rea.knowledge import JsonKnowledgeStore
 from rea.policy import CommandPolicy
 
@@ -34,3 +39,4 @@ def test_map_repository_saves_compact_inventory(tmp_path: Path) -> None:
     assert context["repository"] == tmp_path.name
     assert context["languages"]["Python"] == 1
     assert context["symbols"][0]["name"] == "Service"
+    assert "## Análise técnica" in render_project_analysis(context)

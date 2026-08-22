@@ -124,6 +124,10 @@ class FrameworkAnalyzer:
         "pydantic": "Pydantic",
         "pytest": "pytest",
         "typer": "Typer",
+        "httpx": "HTTPX",
+        "pyyaml": "PyYAML",
+        "ruff": "Ruff",
+        "hatchling": "Hatchling",
     }
 
     def analyze(self, context: ScanContext) -> AnalysisResult:
@@ -155,7 +159,11 @@ class FrameworkAnalyzer:
             except tomllib.TOMLDecodeError as exc:
                 result.warnings.append(f"Invalid {relative}: {exc}")
                 continue
-            dependencies = payload.get("project", {}).get("dependencies", [])
+            project = payload.get("project", {})
+            dependencies = list(project.get("dependencies", []))
+            for values in (project.get("optional-dependencies") or {}).values():
+                dependencies.extend(values)
+            dependencies.extend(payload.get("build-system", {}).get("requires", []))
             normalized = "\n".join(str(item).lower() for item in dependencies)
             for dependency, framework in self.PYTHON_FRAMEWORKS.items():
                 if re.search(rf"(^|\n){re.escape(dependency)}(?:\[|[<>=!~ ]|$)", normalized):
