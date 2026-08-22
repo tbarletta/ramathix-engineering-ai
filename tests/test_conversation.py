@@ -42,3 +42,35 @@ def test_conversation_includes_repository_knowledge_in_system_prompt() -> None:
     assert "Always answer in Brazilian Portuguese" in system
     assert '"repository": "social-media"' in system
     assert '"TypeScript": 42' in system
+
+
+def test_project_analysis_uses_deterministic_repository_dossier() -> None:
+    model = FakeConversationModel()
+    assistant = ConversationAssistant(
+        ModelRouter.from_yaml(CONFIG),
+        model,
+        knowledge={
+            "repository": "demo",
+            "file_count": 12,
+            "languages": {"Python": 10},
+            "facts": [{"category": "framework", "name": "Typer", "evidence": "pyproject.toml"}],
+            "architecture": {
+                "package": {"name": "demo", "python": ">=3.11"},
+                "components": [
+                    {"path": "src/demo", "source_files": 3, "classes": 1, "functions": 4}
+                ],
+                "entrypoints": [{"name": "demo", "target": "demo.cli:app"}],
+                "external_imports": [{"package": "typer", "uses": 3}],
+                "local_import_edges": 5,
+                "test_files": 2,
+            },
+        },
+    )
+
+    response = assistant.reply("Faça uma análise do projeto")
+
+    assert "## Análise técnica: demo" in response
+    assert "Typer" in response
+    assert "src/demo" in response
+    assert "3 arquivos de código, 1 classe e 4 funções" in response
+    assert model.calls == []

@@ -80,6 +80,32 @@ def test_scanner_discovers_python_symbols_and_imports(tmp_path: Path) -> None:
     assert ("framework", "SQLAlchemy") in facts
 
 
+def test_scanner_records_python_relative_imports_and_architecture(tmp_path: Path) -> None:
+    package = tmp_path / "src" / "demo"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="demo"\nrequires-python=">=3.11"\ndependencies=["httpx>=0.28"]\n'
+        '[project.scripts]\ndemo="demo.cli:app"\n',
+        encoding="utf-8",
+    )
+    (package / "cli.py").write_text("from .service import Service\n", encoding="utf-8")
+    (package / "service.py").write_text("class Service:\n    pass\n", encoding="utf-8")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_service.py").write_text("from demo.service import Service\n", encoding="utf-8")
+
+    inventory = scanner(tmp_path).scan(tmp_path, include_git=False)
+
+    assert any(edge.target == ".service" for edge in inventory.dependencies)
+    assert inventory.architecture["entrypoints"] == [{"name": "demo", "target": "demo.cli:app"}]
+    assert inventory.architecture["local_import_edges"] == 2
+    assert {"src/demo", "tests"} <= {
+        item["path"] for item in inventory.architecture["components"]
+    }
+    assert all(item["package"] != "demo" for item in inventory.architecture["external_imports"])
+
+
 def test_scanner_ignores_symlinks_outside_repository(tmp_path: Path) -> None:
     outside = tmp_path.parent / "outside-secret.py"
     outside.write_text("SECRET = 'do-not-read'\n")
