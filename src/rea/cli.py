@@ -8,6 +8,7 @@ import typer
 
 from .audit import AuditLog
 from .config import Settings
+from .conversation import ConversationAssistant, ConversationError
 from .execution import ExecutionApprovalRequired, ExecutionDenied
 from .github import GitHubClient
 from .knowledge import JsonKnowledgeStore, RepositoryScanner
@@ -44,6 +45,55 @@ app.add_typer(issue_app, name="issue")
 app.add_typer(sandbox_app, name="sandbox")
 app.add_typer(repo_app, name="repo")
 app.add_typer(team_app, name="team")
+
+
+@app.callback(invoke_without_command=True)
+def interactive_entrypoint(ctx: typer.Context) -> None:
+    if ctx.invoked_subcommand is None:
+        _run_conversation()
+
+
+@app.command("chat")
+def chat() -> None:
+    _run_conversation()
+
+
+def _run_conversation() -> None:
+    settings = Settings.from_env()
+    assistant = ConversationAssistant(
+        router=ModelRouter.from_yaml(settings.model_config),
+        model=OllamaClient(settings.ollama_url),
+    )
+    typer.echo("Ramathix Engineering AI — local conversational session")
+    typer.echo(
+        "Type /exit to close. This chat plans and advises; governed actions require approval.\n"
+    )
+
+    try:
+        while True:
+            try:
+                message = input("you> ").strip()
+            except EOFError:
+                typer.echo("\nSession closed.")
+                return
+
+            if message.lower() in {"/exit", "/quit", "exit", "quit"}:
+                typer.echo("Session closed.")
+                return
+            if not message:
+                continue
+
+            try:
+                reply = assistant.reply(message)
+            except ConversationError as exc:
+                typer.echo(f"REA> {exc}", err=True)
+                continue
+            except ValueError as exc:
+                typer.echo(f"REA> {exc}", err=True)
+                continue
+            typer.echo(f"\nREA> {reply}\n")
+    except KeyboardInterrupt:
+        typer.echo("\nSession closed.")
 
 
 @app.command()

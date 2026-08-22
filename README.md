@@ -208,6 +208,17 @@ On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
 
 ## First commands
 
+Start a local conversational session with the same global entry point used for all REA workflows:
+
+```bash
+rea
+```
+
+The session uses the local Ollama runtime, preserves context for the current terminal session and
+is advisory by default. Type `/exit` to close it. It cannot create Issues, pull requests, paid
+resources or production changes without the existing explicit governance approvals. `rea chat` is
+an explicit equivalent.
+
 ```bash
 rea status
 rea models status
