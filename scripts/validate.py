@@ -17,9 +17,17 @@ def run(label: str, argv: list[str]) -> None:
 
 
 def main() -> int:
-    python = Path(sys.executable).resolve()
-    ruff = shutil.which("ruff")
-    pytest = shutil.which("pytest")
+    python = Path(sys.executable)
+    suffix = ".exe" if sys.platform == "win32" else ""
+
+    def find_tool(name: str) -> str | None:
+        sibling = python.parent / f"{name}{suffix}"
+        if sibling.exists():
+            return str(sibling)
+        return shutil.which(name)
+
+    ruff = find_tool("ruff")
+    pytest = find_tool("pytest")
 
     if ruff is None or pytest is None:
         print(
