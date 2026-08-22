@@ -210,23 +210,18 @@ def _roadmap_constraints(knowledge: dict | None) -> list[str]:
 
 def _initialize_current_repository(settings: Settings) -> dict | None:
     root = Path.cwd()
-    if not (root / ".git").exists():
-        typer.echo(
-            "Nenhum repositório Git foi encontrado no diretório atual; o chat não possui "
-            "inventário do repositório."
-        )
-        return None
-
     inventory, saved = map_repository(
         root,
         policy=CommandPolicy.from_yaml(settings.command_policy),
         audit=AuditLog(settings.audit_path),
         store=JsonKnowledgeStore(settings.knowledge_path),
+        include_git=(root / ".git").exists(),
     )
+    git_note = "" if (root / ".git").exists() else " (sem histórico Git)"
     typer.echo(
         "Mapeado "
         f"{inventory.name}: {inventory.file_count} arquivos, {len(inventory.facts)} fatos, "
-        f"{len(inventory.symbols)} símbolos.\n"
+        f"{len(inventory.symbols)} símbolos{git_note}.\n"
         f"Conhecimento salvo em {saved}."
     )
     return compact_knowledge(inventory)

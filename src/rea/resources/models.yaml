@@ -1,0 +1,31 @@
+models:
+  reasoner:
+    provider: ollama
+    model: qwen3:14b
+    context_window: 16384
+  coder:
+    provider: ollama
+    model: qwen3:14b
+    context_window: 16384
+  utility:
+    provider: ollama
+    model: qwen3:8b
+    context_window: 8192
+
+routes:
+  engineering_manager: reasoner
+  tech_lead: reasoner
+  senior_developer: coder
+  senior_backend: coder
+  senior_frontend: coder
+  senior_mobile: coder
+  database: reasoner
+  devops_sre: reasoner
+  security: reasoner
+  performance: reasoner
+  qa_testing: coder
+  code_review: reasoner
+  product_business: reasoner
+  cloud_architect: reasoner
+  finops: utility
+  utility: utility
