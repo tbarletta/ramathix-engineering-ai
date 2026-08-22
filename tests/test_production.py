@@ -43,6 +43,21 @@ def test_status_command_preserves_documented_name() -> None:
     assert "Ramathix Engineering AI V1.0.0" in result.stdout
 
 
+def test_bare_cli_starts_a_conversational_session() -> None:
+    result = CliRunner().invoke(app, input="/exit\n")
+
+    assert result.exit_code == 0
+    assert "local conversational session" in result.stdout
+    assert "Session closed." in result.stdout
+
+
+def test_chat_command_starts_a_conversational_session() -> None:
+    result = CliRunner().invoke(app, ["chat"], input="/exit\n")
+
+    assert result.exit_code == 0
+    assert "local conversational session" in result.stdout
+
+
 def test_json_provider_filters_service(tmp_path: Path) -> None:
     path = tmp_path / "signals.json"
     path.write_text(

@@ -43,6 +43,31 @@ class OllamaClient:
         response.raise_for_status()
         return {item["name"] for item in response.json().get("models", [])}
 
+    def chat(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        think: bool = False,
+        max_tokens: int = 384,
+    ) -> str:
+        response = httpx.post(
+            f"{self.base_url}/api/chat",
+            json={
+                "model": model,
+                "stream": False,
+                "think": think,
+                "options": {"num_predict": max_tokens},
+                "messages": messages,
+            },
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        content = response.json().get("message", {}).get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("Ollama returned an empty chat response")
+        return content.strip()
+
     def chat_json(
         self, *, model: str, system: str, user: str, schema: dict[str, Any]
     ) -> dict[str, Any]:
