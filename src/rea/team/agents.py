@@ -5,6 +5,7 @@ from typing import Any, Protocol
 
 from ..domain import IssueWorkUnit
 from ..models import ModelRouter
+from .context import TeamKnowledgeContext
 from .contracts import (
     CodeReview,
     DeveloperProposal,
@@ -15,7 +16,6 @@ from .contracts import (
     ReviewFinding,
     TechnicalPlan,
 )
-from .context import TeamKnowledgeContext
 
 
 class StructuredModelClient(Protocol):

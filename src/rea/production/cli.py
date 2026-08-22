@@ -10,6 +10,7 @@ from ..audit import AuditLog
 from ..cli import app
 from ..config import Settings
 from ..execution import GovernedLocalRunner
+from ..governance.cli import governance_app
 from ..models import ModelRouter, OllamaClient
 from ..policy import CommandPolicy
 from .agent import IncidentSREAgent
@@ -22,11 +23,11 @@ from .providers import (
 )
 from .workflow import IncidentStore, IncidentWorkflow
 
-
 incident_app = typer.Typer(help="Read-only production incident analysis")
 production_app = typer.Typer(help="Read-only production inspection and policy")
 app.add_typer(incident_app, name="incident")
 app.add_typer(production_app, name="production")
+app.add_typer(governance_app, name="governance")
 
 
 def _status_current() -> None:

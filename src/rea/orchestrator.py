@@ -3,7 +3,6 @@ from __future__ import annotations
 from .domain import IssueWorkUnit, TechLeadPlan
 from .models import ModelRouter, OllamaClient
 
-
 TECH_LEAD_SCHEMA = {
     "type": "object",
     "properties": {

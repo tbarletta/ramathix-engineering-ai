@@ -21,7 +21,7 @@ class ExecutionDenied(RuntimeError):
     pass
 
 
-class ExecutionApprovalRequired(RuntimeError):
+class ExecutionApprovalRequired(PermissionError):
     def __init__(
         self,
         *,

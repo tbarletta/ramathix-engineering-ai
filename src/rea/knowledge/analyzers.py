@@ -45,7 +45,7 @@ class AnalysisResult:
     manifests: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
-    def extend(self, other: "AnalysisResult") -> None:
+    def extend(self, other: AnalysisResult) -> None:
         self.facts.extend(other.facts)
         self.dependencies.extend(other.dependencies)
         self.manifests.extend(other.manifests)

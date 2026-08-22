@@ -7,7 +7,6 @@ from typing import Any
 
 from ..knowledge.store import JsonKnowledgeStore
 
-
 _CONFIDENCE_PRIORITY = {
     "confirmed": 0,
     "documented": 1,

@@ -13,7 +13,6 @@ from ..team.context import TeamKnowledgeContext
 from ..team.contracts import CodeReview, ReviewDecision, ReviewFinding
 from .contracts import CodingIteration, FileMutation
 
-
 CODING_ITERATION_SCHEMA = {
     "type": "object",
     "properties": {

@@ -2,7 +2,6 @@ from pathlib import Path
 
 from rea.models import ModelRouter
 
-
 CONFIG = Path(__file__).parents[1] / "config" / "models.yaml"
 
 

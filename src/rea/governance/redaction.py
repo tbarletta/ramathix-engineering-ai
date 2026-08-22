@@ -4,7 +4,10 @@ import re
 from typing import Any
 
 _SECRET_PATTERNS = [
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
+    re.compile(
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+        re.S,
+    ),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
@@ -20,11 +23,10 @@ def redact_text(value: str) -> str:
     redacted = value
     for pattern in _SECRET_PATTERNS:
         redacted = pattern.sub("***REDACTED_SECRET***", redacted)
-    redacted = _ASSIGNMENT.sub(
+    return _ASSIGNMENT.sub(
         lambda match: f"{match.group(1)}=***REDACTED_SECRET***",
         redacted,
     )
-    return redacted
 
 
 def redact_value(value: Any) -> Any:

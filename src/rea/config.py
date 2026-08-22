@@ -17,7 +17,7 @@ class Settings:
     worktree_path: Path
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         home = Path(os.getenv("REA_HOME", ".")).resolve()
 
         def resolve_path(name: str, default: str) -> Path:
