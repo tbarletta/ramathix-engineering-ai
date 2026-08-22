@@ -41,6 +41,22 @@ class GitHubClient:
             labels=tuple(label["name"] for label in data.get("labels", [])),
         )
 
+    def create_issue(
+        self,
+        repository: str,
+        *,
+        title: str,
+        body: str,
+    ) -> dict[str, Any]:
+        response = httpx.post(
+            f"{self.base_url}/repos/{repository}/issues",
+            headers=self._headers(),
+            json={"title": title, "body": body},
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def create_pull_request(
         self,
         repository: str,
