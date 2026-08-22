@@ -11,6 +11,7 @@ from .config import Settings
 from .conversation import ConversationAssistant, ConversationError
 from .execution import ExecutionApprovalRequired, ExecutionDenied
 from .github import GitHubClient
+from .initialization import compact_knowledge, discover_repository_roots, map_repository
 from .knowledge import JsonKnowledgeStore, RepositoryScanner
 from .level6 import (
     IterationLimitExceeded,
@@ -58,11 +59,55 @@ def chat() -> None:
     _run_conversation()
 
 
+@app.command("init")
+def initialize(
+    path: Path = typer.Argument(Path(".")),
+    workspace: bool = typer.Option(
+        False,
+        "--workspace",
+        help="Discover and map every Git repository below PATH.",
+    ),
+    include_git: bool = typer.Option(True, "--git/--no-git"),
+) -> None:
+    settings = Settings.from_env()
+    roots = discover_repository_roots(path) if workspace else [path.resolve()]
+    if not roots:
+        raise typer.BadParameter("no Git repositories were found in the workspace")
+
+    policy = CommandPolicy.from_yaml(settings.command_policy)
+    audit = AuditLog(settings.audit_path)
+    store = JsonKnowledgeStore(settings.knowledge_path)
+    mapped = []
+    for root in roots:
+        inventory, saved = map_repository(
+            root,
+            policy=policy,
+            audit=audit,
+            store=store,
+            include_git=include_git,
+        )
+        mapped.append(
+            {
+                "name": inventory.name,
+                "root": inventory.root,
+                "files": inventory.file_count,
+                "languages": inventory.languages,
+                "facts": len(inventory.facts),
+                "dependencies": len(inventory.dependencies),
+                "symbols": len(inventory.symbols),
+                "saved": str(saved),
+            }
+        )
+    typer.echo(json.dumps({"mapped": mapped}, ensure_ascii=False, indent=2))
+
+
 def _run_conversation() -> None:
     settings = Settings.from_env()
+    knowledge = _initialize_current_repository(settings)
     assistant = ConversationAssistant(
         router=ModelRouter.from_yaml(settings.model_config),
         model=OllamaClient(settings.ollama_url),
+        knowledge=knowledge,
     )
     typer.echo("Ramathix Engineering AI — local conversational session")
     typer.echo(
@@ -94,6 +139,27 @@ def _run_conversation() -> None:
             typer.echo(f"\nREA> {reply}\n")
     except KeyboardInterrupt:
         typer.echo("\nSession closed.")
+
+
+def _initialize_current_repository(settings: Settings) -> dict | None:
+    root = Path.cwd()
+    if not (root / ".git").exists():
+        typer.echo("No Git repository found in the current directory; chat has no repo inventory.")
+        return None
+
+    inventory, saved = map_repository(
+        root,
+        policy=CommandPolicy.from_yaml(settings.command_policy),
+        audit=AuditLog(settings.audit_path),
+        store=JsonKnowledgeStore(settings.knowledge_path),
+    )
+    typer.echo(
+        "Mapped "
+        f"{inventory.name}: {inventory.file_count} files, {len(inventory.facts)} facts, "
+        f"{len(inventory.symbols)} symbols.\n"
+        f"Knowledge saved to {saved}."
+    )
+    return compact_knowledge(inventory)
 
 
 @app.command()

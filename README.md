@@ -217,7 +217,16 @@ rea
 The session uses the local Ollama runtime, preserves context for the current terminal session and
 is advisory by default. Type `/exit` to close it. It cannot create Issues, pull requests, paid
 resources or production changes without the existing explicit governance approvals. `rea chat` is
-an explicit equivalent.
+an explicit equivalent. When started inside a Git repository, REA refreshes the deterministic
+Knowledge Engine inventory before opening the conversation and passes a bounded factual summary
+to the assistant.
+
+Map a repository explicitly, or discover all Git repositories under a workspace:
+
+```bash
+rea init .
+rea init ~/workspace/ramathix --workspace
+```
 
 ```bash
 rea status
