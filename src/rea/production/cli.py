@@ -49,6 +49,7 @@ def _replace_status_callback() -> None:
         callback = getattr(command, "callback", None)
         if getattr(callback, "__name__", "") == "status":
             command.callback = _status_current
+            command.name = "status"
             return
 
 

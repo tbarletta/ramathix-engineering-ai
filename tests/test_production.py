@@ -3,9 +3,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
 from rea.audit import AuditLog
 from rea.production.agent import IncidentSREAgent
+from rea.production.cli import app
 from rea.production.contracts import IncidentRequest, ProductionSignal, SignalKind
 from rea.production.policy import (
     ProductionCapability,
@@ -32,6 +34,13 @@ def test_production_policy_never_allows_write() -> None:
     policy.authorize(ProductionCapability.SOURCE_READ)
     with pytest.raises(ProductionWriteDenied):
         policy.authorize(ProductionCapability.DATABASE_READ, write=True)
+
+
+def test_status_command_preserves_documented_name() -> None:
+    result = CliRunner().invoke(app, ["status"])
+
+    assert result.exit_code == 0
+    assert "Ramathix Engineering AI V1.0.0" in result.stdout
 
 
 def test_json_provider_filters_service(tmp_path: Path) -> None:
