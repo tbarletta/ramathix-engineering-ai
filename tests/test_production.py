@@ -43,7 +43,8 @@ def test_status_command_preserves_documented_name() -> None:
     assert "Ramathix Engineering AI V1.0.0" in result.stdout
 
 
-def test_bare_cli_starts_a_conversational_session() -> None:
+def test_bare_cli_starts_a_conversational_session(monkeypatch) -> None:
+    monkeypatch.setattr("rea.cli._initialize_current_repository", lambda settings: None)
     result = CliRunner().invoke(app, input="/exit\n")
 
     assert result.exit_code == 0
@@ -51,7 +52,8 @@ def test_bare_cli_starts_a_conversational_session() -> None:
     assert "Session closed." in result.stdout
 
 
-def test_chat_command_starts_a_conversational_session() -> None:
+def test_chat_command_starts_a_conversational_session(monkeypatch) -> None:
+    monkeypatch.setattr("rea.cli._initialize_current_repository", lambda settings: None)
     result = CliRunner().invoke(app, ["chat"], input="/exit\n")
 
     assert result.exit_code == 0

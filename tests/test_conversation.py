@@ -26,3 +26,18 @@ def test_conversation_uses_reasoner_and_preserves_session_context() -> None:
     second_messages = model.calls[1]["messages"]
     assert {"role": "user", "content": "Quero melhorar a confiabilidade."} in second_messages
     assert {"role": "assistant", "content": "Vamos planejar isso juntos."} in second_messages
+
+
+def test_conversation_includes_repository_knowledge_in_system_prompt() -> None:
+    model = FakeConversationModel()
+    assistant = ConversationAssistant(
+        ModelRouter.from_yaml(CONFIG),
+        model,
+        knowledge={"repository": "social-media", "languages": {"TypeScript": 42}},
+    )
+
+    assistant.reply("Quais linguagens o projeto usa?")
+
+    system = model.calls[0]["messages"][0]["content"]
+    assert '"repository": "social-media"' in system
+    assert '"TypeScript": 42' in system

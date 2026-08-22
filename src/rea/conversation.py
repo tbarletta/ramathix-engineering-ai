@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
-from .governance.redaction import redact_text
+from .governance.redaction import redact_text, redact_value
 from .models import ModelRouter
 
 MAX_HISTORY_MESSAGES = 12
@@ -23,6 +24,7 @@ class ConversationalModel(Protocol):
 class ConversationAssistant:
     router: ModelRouter
     model: ConversationalModel
+    knowledge: dict[str, Any] | None = None
     history: list[dict[str, str]] = field(default_factory=list)
 
     def reply(self, message: str) -> str:
@@ -53,9 +55,8 @@ class ConversationAssistant:
         )
         return response
 
-    @staticmethod
-    def _system_prompt() -> str:
-        return (
+    def _system_prompt(self) -> str:
+        prompt = (
             "You are Ramathix Engineering AI, a local-first conversational engineering "
             "assistant. Answer in the user's language. Help clarify strategic goals, analyze "
             "engineering trade-offs, propose governed plans and explain REA capabilities. "
@@ -64,3 +65,10 @@ class ConversationAssistant:
             "governance and human approval. Be concise, candid about uncertainty, and ask for "
             "the repository or constraints when they are needed."
         )
+        if self.knowledge:
+            prompt += (
+                "\n\nUse this repository inventory as factual context. Treat its confidence "
+                "labels as authoritative and do not invent repository details:\n"
+                + json.dumps(redact_value(self.knowledge), ensure_ascii=False, indent=2)
+            )
+        return prompt
