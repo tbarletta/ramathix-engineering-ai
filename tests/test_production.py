@@ -48,8 +48,8 @@ def test_bare_cli_starts_a_conversational_session(monkeypatch) -> None:
     result = CliRunner().invoke(app, input="/exit\n")
 
     assert result.exit_code == 0
-    assert "local conversational session" in result.stdout
-    assert "Session closed." in result.stdout
+    assert "sessão conversacional local" in result.stdout
+    assert "Sessão encerrada." in result.stdout
 
 
 def test_chat_command_starts_a_conversational_session(monkeypatch) -> None:
@@ -57,7 +57,7 @@ def test_chat_command_starts_a_conversational_session(monkeypatch) -> None:
     result = CliRunner().invoke(app, ["chat"], input="/exit\n")
 
     assert result.exit_code == 0
-    assert "local conversational session" in result.stdout
+    assert "sessão conversacional local" in result.stdout
 
 
 def test_json_provider_filters_service(tmp_path: Path) -> None:

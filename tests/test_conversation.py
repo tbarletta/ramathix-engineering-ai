@@ -39,5 +39,6 @@ def test_conversation_includes_repository_knowledge_in_system_prompt() -> None:
     assistant.reply("Quais linguagens o projeto usa?")
 
     system = model.calls[0]["messages"][0]["content"]
+    assert "Always answer in Brazilian Portuguese" in system
     assert '"repository": "social-media"' in system
     assert '"TypeScript": 42' in system
