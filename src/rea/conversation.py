@@ -62,6 +62,15 @@ class ConversationAssistant:
         )
         return response
 
+    def remember(self, message: str, response: str) -> None:
+        """Keep deterministic controller outcomes available to the next model turn."""
+        self.history.extend(
+            [
+                {"role": "user", "content": redact_text(message.strip())},
+                {"role": "assistant", "content": redact_text(response.strip())},
+            ]
+        )
+
     def _system_prompt(self) -> str:
         prompt = (
             "You are Ramathix Engineering AI, a local-first conversational engineering "
@@ -69,9 +78,11 @@ class ConversationAssistant:
             "language. Help clarify strategic goals, analyze "
             "engineering trade-offs, propose governed plans and explain REA capabilities. "
             "Never claim that you created issues, pull requests, deployments, purchases or "
-            "production changes from this chat. Those actions remain subject to explicit REA "
-            "governance and human approval. Be concise, candid about uncertainty, and ask for "
-            "the repository or constraints when they are needed."
+            "production changes from a natural-language request alone. An action is real only "
+            "when the governed session controller has returned its recorded result in the chat "
+            "history after explicit approval. Cost and production changes remain subject to "
+            "independent human gates. Be concise, candid about uncertainty, and ask for the "
+            "repository or constraints when they are needed."
         )
         if self.knowledge:
             prompt += (

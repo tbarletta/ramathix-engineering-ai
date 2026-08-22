@@ -57,6 +57,9 @@ class OrganizationWorkflow:
         self.portfolio = portfolio or PortfolioPlanner()
         self.risk_engine = risk_engine or RiskEngine()
 
+    def load(self, plan_id: str) -> OrganizationPlan:
+        return self.store.load(plan_id)
+
     def plan(
         self,
         strategic_goal: str,

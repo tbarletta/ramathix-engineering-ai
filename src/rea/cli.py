@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from configparser import ConfigParser
 from pathlib import Path
 from typing import NoReturn
 
@@ -9,6 +10,7 @@ import typer
 from .audit import AuditLog
 from .config import Settings
 from .conversation import ConversationAssistant, ConversationError
+from .conversation_actions import ConversationActionController
 from .execution import ExecutionApprovalRequired, ExecutionDenied
 from .github import GitHubClient
 from .initialization import compact_knowledge, discover_repository_roots, map_repository
@@ -23,6 +25,7 @@ from .level6 import (
 )
 from .models import ModelRouter, OllamaClient
 from .orchestrator import TechLeadAgent
+from .organization import AIEngineeringManager, OrganizationPlanStore, OrganizationWorkflow
 from .policy import CommandPolicy
 from .sandbox import ApprovalRequired, DockerSandbox, PolicyViolation
 from .team import (
@@ -103,16 +106,18 @@ def initialize(
 
 def _run_conversation() -> None:
     settings = Settings.from_env()
+    root = Path.cwd()
     knowledge = _initialize_current_repository(settings)
     assistant = ConversationAssistant(
         router=ModelRouter.from_yaml(settings.model_config),
         model=OllamaClient(settings.ollama_url),
         knowledge=knowledge,
     )
+    actions = _conversation_actions(settings, root, knowledge)
     typer.echo("Ramathix Engineering AI — sessão conversacional local")
     typer.echo(
-        "Digite /exit para encerrar. Este chat planeja e orienta; ações governadas exigem "
-        "aprovação.\n"
+        "Digite /exit para encerrar. Roadmaps, Issues e execução Level 6 são governados; "
+        "use /ajuda para os comandos conversacionais.\n"
     )
 
     try:
@@ -130,7 +135,11 @@ def _run_conversation() -> None:
                 continue
 
             try:
-                reply = assistant.reply(message)
+                reply = actions.handle(message)
+                if reply is None:
+                    reply = assistant.reply(message)
+                else:
+                    assistant.remember(message, reply)
             except ConversationError as exc:
                 typer.echo(f"REA> {exc}", err=True)
                 continue
@@ -140,6 +149,63 @@ def _run_conversation() -> None:
             typer.echo(f"\nREA> {reply}\n")
     except KeyboardInterrupt:
         typer.echo("\nSessão encerrada.")
+
+
+def _conversation_actions(
+    settings: Settings,
+    root: Path,
+    knowledge: dict | None,
+) -> ConversationActionController:
+    repository = _github_repository(root)
+    return ConversationActionController(
+        workflow=_organization_workflow(settings, with_github=True),
+        repository=repository,
+        constraints=_roadmap_constraints(knowledge),
+        execute_issue=lambda number: _run_level6_issue(
+            settings,
+            number=number,
+            repository=repository or "",
+            workspace=root,
+            base="main",
+            knowledge_repo=None,
+            image=None,
+            approved_rules={"git-push"},
+            allow_network=False,
+            max_iterations=3,
+        ),
+    )
+
+
+def _roadmap_constraints(knowledge: dict | None) -> list[str]:
+    technologies = [
+        str(fact["name"])
+        for fact in (knowledge or {}).get("facts", [])
+        if fact.get("category") in {"framework", "infrastructure", "data", "messaging"}
+    ]
+    confirmed = ", ".join(technologies) or "nenhuma tecnologia adicional confirmada"
+    architecture = (knowledge or {}).get("architecture") or {}
+    entrypoints = ", ".join(item["name"] for item in architecture.get("entrypoints", []))
+    baseline = [
+        "Estado confirmado, não pendência: "
+        f"{confirmed} já estão presentes no repositório e não devem ser instalados, "
+        "configurados novamente ou recriados sem uma lacuna comprovada.",
+        "Estado confirmado: "
+        f"há {architecture.get('test_files', 0)} arquivos de teste identificados"
+        + (f" e os entry points são {entrypoints}." if entrypoints else "."),
+    ]
+    return [
+        "Use somente o repositório informado e decomponha o trabalho em unidades pequenas, "
+        "testáveis e independentes quando as dependências forem atendidas.",
+        f"Tecnologias confirmadas pelo inventário: {confirmed}.",
+        "Não declare cobertura atual, coverage.py, pytest-cov, testes de integração ou "
+        "ferramentas ausentes como existentes sem evidência. Comece por medir ou configurar "
+        "o que for necessário.",
+        "Não proponha custo, escrita em produção ou serviço externo sem declarar o gate "
+        "correspondente.",
+        "Para uma solicitação genérica de melhoria, a primeira unidade deve medir e registrar "
+        "uma lacuna real; mudanças posteriores precisam depender dessa evidência.",
+        *baseline,
+    ]
 
 
 def _initialize_current_repository(settings: Settings) -> dict | None:
@@ -242,36 +308,15 @@ def issue_run(
     max_iterations: int = typer.Option(3, "--max-iterations", min=1, max=8),
 ) -> None:
     settings = Settings.from_env()
-    audit = AuditLog(settings.audit_path)
-    policy = CommandPolicy.from_yaml(settings.command_policy)
-    github = GitHubClient()
-    workspace = workspace.resolve()
-
-    inventory = RepositoryScanner(policy=policy, audit=audit).scan(
-        workspace,
-        include_git=True,
-    )
-    JsonKnowledgeStore(settings.knowledge_path).save(inventory)
-    selected_knowledge = knowledge_repo or inventory.name
-    issue = github.get_issue(repo, number)
-    audit.write(
-        "issue.loaded",
-        actor="github",
-        data={"repo": repo, "issue": number, "title": issue.title},
-    )
-    sandbox_image = image or _infer_sandbox_image(inventory.manifests)
-    worktree_root = settings.worktree_path / repo.replace("/", "__")
-    workflow = _level6_workflow(settings, github)
-
     try:
-        result = workflow.run(
-            issue,
-            source_workspace=workspace,
-            worktree_root=worktree_root,
-            knowledge_repository=selected_knowledge,
-            knowledge_root=str(workspace),
-            base_branch=base,
-            sandbox_image=sandbox_image,
+        result = _run_level6_issue(
+            settings,
+            number=number,
+            repository=repo,
+            workspace=workspace,
+            base=base,
+            knowledge_repo=knowledge_repo,
+            image=image,
             approved_rules=set(approve_rule),
             allow_network=allow_network,
             max_iterations=max_iterations,
@@ -340,6 +385,50 @@ def issue_run(
         raise typer.Exit(code=50) from exc
 
     typer.echo(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+
+
+def _run_level6_issue(
+    settings: Settings,
+    *,
+    number: int,
+    repository: str,
+    workspace: Path,
+    base: str,
+    knowledge_repo: str | None,
+    image: str | None,
+    approved_rules: set[str],
+    allow_network: bool,
+    max_iterations: int,
+):
+    audit = AuditLog(settings.audit_path)
+    policy = CommandPolicy.from_yaml(settings.command_policy)
+    github = GitHubClient()
+    workspace = workspace.resolve()
+    inventory = RepositoryScanner(policy=policy, audit=audit).scan(
+        workspace,
+        include_git=True,
+    )
+    JsonKnowledgeStore(settings.knowledge_path).save(inventory)
+    selected_knowledge = knowledge_repo or inventory.name
+    issue = github.get_issue(repository, number)
+    audit.write(
+        "issue.loaded",
+        actor="github",
+        data={"repo": repository, "issue": number, "title": issue.title},
+    )
+    workflow = _level6_workflow(settings, github)
+    return workflow.run(
+        issue,
+        source_workspace=workspace,
+        worktree_root=settings.worktree_path / repository.replace("/", "__"),
+        knowledge_repository=selected_knowledge,
+        knowledge_root=str(workspace),
+        base_branch=base,
+        sandbox_image=image or _infer_sandbox_image(inventory.manifests),
+        approved_rules=approved_rules,
+        allow_network=allow_network,
+        max_iterations=max_iterations,
+    )
 
 
 @repo_app.command("scan")
@@ -475,6 +564,54 @@ def _first_team_workflow(settings: Settings) -> FirstTeamWorkflow:
         policy=CommandPolicy.from_yaml(settings.command_policy),
         audit=AuditLog(settings.audit_path),
     )
+
+
+def _organization_workflow(
+    settings: Settings,
+    *,
+    with_github: bool,
+) -> OrganizationWorkflow:
+    return OrganizationWorkflow(
+        manager=AIEngineeringManager(
+            ModelRouter.from_yaml(settings.model_config),
+            OllamaClient(settings.ollama_url),
+        ),
+        store=OrganizationPlanStore(settings.home / ".rea" / "organization"),
+        audit=AuditLog(settings.audit_path),
+        github=GitHubClient() if with_github else None,
+    )
+
+
+def _github_repository(root: Path) -> str | None:
+    git = root / ".git"
+    config_path = git / "config"
+    if git.is_file():
+        marker = git.read_text(encoding="utf-8", errors="replace").strip()
+        if marker.startswith("gitdir:"):
+            config_path = (root / marker.removeprefix("gitdir:").strip() / "config").resolve()
+    if not config_path.is_file():
+        return None
+
+    parser = ConfigParser(interpolation=None)
+    parser.read(config_path, encoding="utf-8")
+    remote = parser['remote "origin"'] if parser.has_section('remote "origin"') else {}
+    url = remote.get("url", "")
+    return _github_slug(url)
+
+
+def _github_slug(url: str) -> str | None:
+    value = url.strip().rstrip("/")
+    if "github.com:" in value:
+        value = value.split("github.com:", maxsplit=1)[1]
+    elif "github.com/" in value:
+        value = value.split("github.com/", maxsplit=1)[1]
+    else:
+        return None
+    slug = value.removesuffix(".git")
+    parts = slug.split("/")
+    if len(parts) != 2 or not all(parts):
+        return None
+    return slug
 
 
 def _level6_workflow(settings: Settings, github: GitHubClient) -> Level6Workflow:
