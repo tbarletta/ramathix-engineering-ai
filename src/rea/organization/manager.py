@@ -8,7 +8,6 @@ from ..models import ModelRouter
 from ..team.agents import StructuredModelClient
 from .contracts import Initiative, Project, WorkUnit
 
-
 ORGANIZATION_PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {

@@ -18,7 +18,6 @@ from .workflow import (
     OrganizationWorkflow,
 )
 
-
 org_app = typer.Typer(help="AI Engineering Organization and portfolio management")
 
 
