@@ -11,7 +11,6 @@ from .contracts import (
     SpecialistAssessment,
 )
 
-
 _SECURITY_MARKERS = (
     "auth",
     "authentication",

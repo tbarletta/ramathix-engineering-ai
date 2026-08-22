@@ -5,6 +5,8 @@ from .contracts import Level6Result
 from .workflow import (
     IterationLimitExceeded,
     Level6ArtifactStore,
+)
+from .workflow import (
     Level6Workflow as BaseLevel6Workflow,
 )
 from .workspace import WorkspaceBoundaryError

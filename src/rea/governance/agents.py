@@ -10,7 +10,6 @@ from ..team.context import TeamKnowledgeContext
 from .contracts import GovernanceFinding, GovernanceRiskLevel, SpecialistAssessment
 from .redaction import redact_value
 
-
 GOVERNANCE_SCHEMA = {
     "type": "object",
     "properties": {

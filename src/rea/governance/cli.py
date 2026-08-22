@@ -12,7 +12,6 @@ from ..models import ModelRouter, OllamaClient
 from ..team.context import KnowledgeContextBuilder
 from .workflow import AdvancedGovernanceWorkflow
 
-
 governance_app = typer.Typer(help="Advanced risk and governance assessment")
 
 

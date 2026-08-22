@@ -23,7 +23,6 @@ from .providers import (
 )
 from .workflow import IncidentStore, IncidentWorkflow
 
-
 incident_app = typer.Typer(help="Read-only production incident analysis")
 production_app = typer.Typer(help="Read-only production inspection and policy")
 app.add_typer(incident_app, name="incident")

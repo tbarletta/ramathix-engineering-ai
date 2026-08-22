@@ -3,7 +3,6 @@ from pathlib import Path
 from rea.domain import Decision
 from rea.policy import CommandPolicy
 
-
 POLICY = Path(__file__).parents[1] / "config" / "policies" / "commands.yaml"
 
 

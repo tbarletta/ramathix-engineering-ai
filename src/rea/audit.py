@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-
 SENSITIVE_FRAGMENTS = ("token", "password", "secret", "api_key", "private_key", "credential")
 
 

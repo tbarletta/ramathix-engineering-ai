@@ -16,7 +16,7 @@ class ModelRouter:
         self.routes = routes
 
     @classmethod
-    def from_yaml(cls, path: Path) -> "ModelRouter":
+    def from_yaml(cls, path: Path) -> ModelRouter:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         return cls(models=data.get("models", {}), routes=data.get("routes", {}))
 

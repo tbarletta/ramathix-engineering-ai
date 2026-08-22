@@ -14,7 +14,6 @@ from ..team.contracts import CodeReview, ReviewDecision, ReviewFinding
 from .profiles import PROFILES, SpecialistRole
 from .router import AgentAssignment, RoutingError
 
-
 QA_GATE_SCHEMA = {
     "type": "object",
     "properties": {

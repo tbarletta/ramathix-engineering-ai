@@ -15,7 +15,6 @@ from .contracts import (
 )
 from .redaction import redact_value
 
-
 INCIDENT_SCHEMA = {
     "type": "object",
     "properties": {

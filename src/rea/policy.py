@@ -14,7 +14,7 @@ class CommandPolicy:
         self.rules = rules
 
     @classmethod
-    def from_yaml(cls, path: Path) -> "CommandPolicy":
+    def from_yaml(cls, path: Path) -> CommandPolicy:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         return cls(default=Decision(data.get("default", "ask")), rules=data.get("rules", []))
 

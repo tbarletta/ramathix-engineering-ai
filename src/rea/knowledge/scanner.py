@@ -22,7 +22,6 @@ from .ast import AstProvider, PythonAstProvider, TypeScriptImportProvider
 from .git import GitHistoryAnalyzer
 from .models import RepositoryInventory
 
-
 LANGUAGES = {
     ".py": "Python",
     ".ts": "TypeScript",

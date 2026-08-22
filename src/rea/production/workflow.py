@@ -11,7 +11,6 @@ from .contracts import IncidentAnalysis, IncidentRequest, ProductionSignal
 from .providers import ProductionSignalProvider
 from .redaction import redact_value
 
-
 _INCIDENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 
