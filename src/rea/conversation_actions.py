@@ -185,6 +185,16 @@ class ConversationActionController:
             return "Ação pendente cancelada. Nenhuma alteração foi executada."
         if normalized == "/aprovar":
             return self._approve()
+        if self.pending is not None:
+            # A pending action means REA just showed the exact command/Issue/clone and asked
+            # for a decision. Recognizing natural phrasing here (not just the literal
+            # `/aprovar`) matters: anything that falls through to free chat while an action is
+            # pending risks the general model hallucinating that the work was already done.
+            if _looks_like_cancellation(normalized):
+                self.pending = None
+                return "Ação pendente cancelada. Nenhuma alteração foi executada."
+            if _looks_like_approval(normalized):
+                return self._approve()
         if match := re.fullmatch(r"/usar\s+([\w-]+)", normalized):
             return self._use_plan(match.group(1))
         if match := re.fullmatch(r"/executar\s+([\w-]+)", normalized):
@@ -564,6 +574,53 @@ def _is_roadmap_request(message: str) -> bool:
 
 def _is_execution_request(message: str) -> bool:
     return any(word in message for word in ("implemente", "implementar", "execute", "executar"))
+
+
+def _looks_like_approval(message: str) -> bool:
+    return any(
+        phrase in message
+        for phrase in (
+            "aprovado",
+            "aprovada",
+            "aprovo",
+            "aprova",
+            "tudo aprovado",
+            "confirmo",
+            "confirmado",
+            "autorizado",
+            "autorizo",
+            "pode seguir",
+            "pode ir",
+            "pode fazer",
+            "pode continuar",
+            "pode prosseguir",
+            "pode aprovar",
+            "sim, pode",
+            "sim pode",
+            "ok, pode",
+            "ok pode",
+        )
+    )
+
+
+def _looks_like_cancellation(message: str) -> bool:
+    return any(
+        phrase in message
+        for phrase in (
+            "cancela",
+            "cancele",
+            "cancelar",
+            "aborta",
+            "abortar",
+            "não quero",
+            "nao quero",
+            "não faça isso",
+            "nao faca isso",
+            "esquece isso",
+            "deixa pra lá",
+            "deixa pra la",
+        )
+    )
 
 
 def _validate_intent(data: Any) -> dict[str, Any] | None:

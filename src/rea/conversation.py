@@ -11,6 +11,7 @@ from .initialization import render_project_analysis
 from .models import ModelRouter
 
 MAX_HISTORY_MESSAGES = 12
+CHAT_MAX_TOKENS = 1536
 
 
 class ConversationError(RuntimeError):
@@ -18,7 +19,9 @@ class ConversationError(RuntimeError):
 
 
 class ConversationalModel(Protocol):
-    def chat(self, *, model: str, messages: list[dict[str, str]]) -> str: ...
+    def chat(
+        self, *, model: str, messages: list[dict[str, str]], max_tokens: int = ...
+    ) -> str: ...
 
 
 @dataclass
@@ -28,7 +31,7 @@ class ConversationAssistant:
     knowledge: dict[str, Any] | None = None
     history: list[dict[str, str]] = field(default_factory=list)
 
-    def reply(self, message: str) -> str:
+    def reply(self, message: str, *, pending_notice: str | None = None) -> str:
         safe_message = redact_text(message.strip())
         if not safe_message:
             raise ValueError("a message is required")
@@ -38,12 +41,18 @@ class ConversationAssistant:
         else:
             target = self.router.resolve("engineering_manager")
             messages = [
-                {"role": "system", "content": self._system_prompt()},
+                {"role": "system", "content": self._system_prompt(pending_notice)},
                 *self.history[-MAX_HISTORY_MESSAGES:],
                 {"role": "user", "content": safe_message},
             ]
             try:
-                response = redact_text(self.model.chat(model=target.model, messages=messages))
+                response = redact_text(
+                    self.model.chat(
+                        model=target.model,
+                        messages=messages,
+                        max_tokens=CHAT_MAX_TOKENS,
+                    )
+                )
             except httpx.HTTPError as exc:
                 raise ConversationError(
                     "O Ollama não está disponível. Inicie o serviço local e verifique "
@@ -71,19 +80,24 @@ class ConversationAssistant:
             ]
         )
 
-    def _system_prompt(self) -> str:
+    def _system_prompt(self, pending_notice: str | None = None) -> str:
         prompt = (
             "You are Ramathix Engineering AI, a local-first conversational engineering "
             "assistant. Always answer in Brazilian Portuguese, regardless of the user's "
             "language. Help clarify strategic goals, analyze "
             "engineering trade-offs, propose governed plans and explain REA capabilities. "
             "Never claim that you created issues, pull requests, deployments, purchases or "
-            "production changes from a natural-language request alone. An action is real only "
-            "when the governed session controller has returned its recorded result in the chat "
-            "history after explicit approval. Cost and production changes remain subject to "
-            "independent human gates. Be concise, candid about uncertainty, and ask for the "
-            "repository or constraints when they are needed."
+            "production changes from a natural-language request alone. Never describe "
+            "installing packages, editing files, writing config, or completing any step of a "
+            "plan as already done — you have no tool access in this reply and nothing you "
+            "write here changes any file. An action is real only when the governed session "
+            "controller has returned its recorded result in the chat history after explicit "
+            "approval. Cost and production changes remain subject to independent human gates. "
+            "Be concise, candid about uncertainty, and ask for the repository or constraints "
+            "when they are needed."
         )
+        if pending_notice:
+            prompt += "\n\n" + pending_notice
         if self.knowledge:
             prompt += (
                 "\n\nUse this repository inventory as factual context. Treat its confidence "

@@ -376,6 +376,57 @@ def test_git_command_intent_with_a_non_git_argv_is_ignored() -> None:
     assert commands == []
 
 
+def test_natural_approval_phrasing_triggers_the_same_pending_action_as_slash_approve() -> None:
+    """Regression test: "aprovado, faça" must not fall through to free chat while an action
+    is pending — that's exactly what let the general model hallucinate finished work that
+    was never actually run."""
+    workflow = FakeWorkflow()
+    current = controller(workflow, [])
+
+    current.handle("Vamos criar um roadmap de melhorias")
+    prepared = current.handle("Implemente a fase 1")
+    assert prepared is not None
+    assert current.pending is not None
+
+    published = current.handle("aprovado, faça")
+
+    assert published is not None
+    assert "Issues publicadas" in published
+    assert workflow.publish_calls == [
+        {
+            "plan_id": "org-demo",
+            "approved_rules": {"github-issue-create"},
+            "unit_ids": {"WU-001"},
+        }
+    ]
+    assert current.pending is None
+
+
+def test_natural_cancellation_phrasing_discards_the_pending_action() -> None:
+    workflow = FakeWorkflow()
+    current = controller(workflow, [])
+
+    current.handle("Vamos criar um roadmap de melhorias")
+    current.handle("Implemente a fase 1")
+    assert current.pending is not None
+
+    cancelled = current.handle("não, cancela isso")
+
+    assert cancelled is not None
+    assert "cancelada" in cancelled.lower()
+    assert current.pending is None
+    assert workflow.publish_calls == []
+
+
+def test_approval_phrasing_without_a_pending_action_falls_through_to_free_chat() -> None:
+    workflow = FakeWorkflow()
+    current = controller(workflow, [])
+
+    response = current.handle("aprovado, muito bom o resultado")
+
+    assert response is None
+
+
 def test_conversation_action_flow_is_explicit_and_runs_level6_only_after_approval() -> None:
     workflow = FakeWorkflow()
     executions: list[int] = []

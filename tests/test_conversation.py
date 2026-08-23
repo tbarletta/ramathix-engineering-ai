@@ -10,8 +10,8 @@ class FakeConversationModel:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def chat(self, *, model: str, messages: list[dict[str, str]]) -> str:
-        self.calls.append({"model": model, "messages": messages})
+    def chat(self, *, model: str, messages: list[dict[str, str]], max_tokens: int = 384) -> str:
+        self.calls.append({"model": model, "messages": messages, "max_tokens": max_tokens})
         return "Vamos planejar isso juntos."
 
 

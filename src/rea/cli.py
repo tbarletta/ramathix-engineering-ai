@@ -156,7 +156,7 @@ def _run_conversation() -> None:
             try:
                 reply = actions.handle(message)
                 if reply is None:
-                    reply = assistant.reply(message)
+                    reply = assistant.reply(message, pending_notice=_pending_notice(actions))
                 else:
                     assistant.remember(message, reply)
             except ConversationError as exc:
@@ -168,6 +168,18 @@ def _run_conversation() -> None:
             typer.echo(f"\nREA> {reply}\n")
     except KeyboardInterrupt:
         typer.echo("\nSessão encerrada.")
+
+
+def _pending_notice(actions: ConversationActionController) -> str | None:
+    if actions.pending is None:
+        return None
+    return (
+        f"Atenção: há uma ação pendente (`{type(actions.pending).__name__}`) aguardando "
+        "confirmação explícita do usuário via `/aprovar` ou `/cancelar`. Essa ação ainda NÃO "
+        "foi executada. Não descreva instalações, edições de arquivo, commits ou qualquer "
+        "outro passo como já concluído; se a mensagem do usuário parecer uma aprovação, "
+        "instrua-o a digitar `/aprovar`."
+    )
 
 
 def _conversation_actions(
