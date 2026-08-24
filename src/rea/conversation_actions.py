@@ -174,6 +174,7 @@ class ConversationActionController:
         classify_intent: Callable[[str, str | None], dict[str, Any]] | None = None,
         preview_git_command: Callable[[list[str]], tuple[str, str | None]] | None = None,
         run_git_command: Callable[[list[str], str | None], str] | None = None,
+        on_status: Callable[[str], None] | None = None,
     ) -> None:
         self.workflow = workflow
         self.repository = repository
@@ -184,9 +185,15 @@ class ConversationActionController:
         self.classify_intent = classify_intent
         self.preview_git_command = preview_git_command
         self.run_git_command = run_git_command
+        self.on_status = on_status
         self.plan: OrganizationPlan | None = None
         self.pending: PendingAction | None = None
         self.mentioned_repository: str | None = repository
+
+    def _report_status(self, label: str) -> None:
+        """Report what REA is about to do, for a CLI-level progress indicator to show."""
+        if self.on_status is not None:
+            self.on_status(label)
 
     def handle(self, message: str) -> str | None:
         reference = extract_github_reference(message)
@@ -230,6 +237,7 @@ class ConversationActionController:
         if self.classify_intent is None:
             return None
         try:
+            self._report_status("Entendendo o pedido...")
             raw = self.classify_intent(message, self.repository)
         except (httpx.HTTPError, ValueError, RuntimeError, KeyError):
             return None
@@ -269,6 +277,7 @@ class ConversationActionController:
             return f"O comando `{command_text}` é bloqueado pela política de comandos do REA."
         if decision == "allow":
             try:
+                self._report_status(f"Executando `{command_text}`...")
                 output = self.run_git_command(argv, rule_id)
             except PermissionError as exc:
                 return f"Execução bloqueada por aprovação adicional: {exc}"
@@ -300,6 +309,7 @@ class ConversationActionController:
             )
         goal = _roadmap_goal(request)
         try:
+            self._report_status("Redigindo a RFC...")
             rfc, saved = self.workflow.draft_rfc(
                 goal,
                 repositories=[self.repository],
@@ -318,6 +328,7 @@ class ConversationActionController:
 
     def _generate_roadmap(self, pending: PendingRfc) -> str:
         try:
+            self._report_status("Planejando o roadmap...")
             plan, saved = self.workflow.plan(
                 pending.goal,
                 repositories=[pending.repository],
@@ -481,6 +492,7 @@ class ConversationActionController:
             pending = self.pending
             assert self.clone_repository is not None
             try:
+                self._report_status(f"Clonando `{pending.repository}`...")
                 outcome = self.clone_repository(pending.repository)
             except httpx.HTTPError:
                 return (
@@ -504,6 +516,7 @@ class ConversationActionController:
         if isinstance(self.pending, PendingPublication):
             pending = self.pending
             try:
+                self._report_status("Publicando Issues no GitHub...")
                 self.plan = self.workflow.publish(
                     pending.plan_id,
                     approved_rules={"github-issue-create"},
@@ -539,6 +552,9 @@ class ConversationActionController:
 
         pending = self.pending
         try:
+            self._report_status(
+                "Executando Level 6 (worktree, implementação, testes, revisão, PR)..."
+            )
             result = self.execute_issue(pending.issue_number)
         except CostApprovalRequired as exc:
             return f"Execução bloqueada: aprovação de custo exigida em `{exc.stage}`."

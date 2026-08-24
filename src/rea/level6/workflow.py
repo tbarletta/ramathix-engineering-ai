@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Protocol
@@ -93,10 +94,13 @@ class Level6Workflow:
         approved_rules: set[str],
         allow_network: bool = False,
         max_iterations: int = 3,
+        on_progress: Callable[[str], None] | None = None,
     ) -> Level6Result:
         if max_iterations < 1 or max_iterations > 8:
             raise ValueError("max_iterations must be between 1 and 8")
+        report = on_progress or (lambda _label: None)
 
+        report("Planejando o pacote de trabalho...")
         package, _ = self.first_team.plan(
             issue,
             knowledge_repository=knowledge_repository,
@@ -116,6 +120,7 @@ class Level6Workflow:
             runner=local_runner,
             audit=self.audit,
         )
+        report("Preparando o ambiente de trabalho (worktree)...")
         worktree = manager.prepare(
             issue_number=issue.number,
             issue_title=issue.title,
@@ -134,6 +139,7 @@ class Level6Workflow:
         sandbox = DockerSandbox(self.policy, self.audit)
 
         for iteration_number in range(1, max_iterations + 1):
+            report(f"Implementando a solução (iteração {iteration_number}/{max_iterations})...")
             reader = WorkspaceReader(worktree.path)
             source_files = reader.snapshot(allowed_paths)
             coding = self.coder.implement(
@@ -160,6 +166,7 @@ class Level6Workflow:
                     },
                 )
 
+            report(f"Validando (rodando testes, iteração {iteration_number})...")
             validation = self._validate(
                 sandbox=sandbox,
                 worktree=worktree,
@@ -196,6 +203,7 @@ class Level6Workflow:
                 ]
                 continue
 
+            report(f"Revisando o código (iteração {iteration_number})...")
             review = self.reviewer.review(
                 work_package=package_dict,
                 context=context,
@@ -233,11 +241,13 @@ class Level6Workflow:
                 feedback.extend(f"Missing test: {item}" for item in review.missing_tests)
                 continue
 
+            report("Criando commit e enviando a branch...")
             commit_sha = manager.commit(
                 worktree,
                 message=f"feat: address issue #{issue.number}",
             )
             manager.push(worktree, approved_rules=approved_rules)
+            report("Abrindo Pull Request...")
             pr = self.github.ensure_pull_request(
                 issue.repository,
                 title=f"REA #{issue.number}: {issue.title}",

@@ -617,3 +617,82 @@ def test_rfc_content_is_shown_before_any_roadmap_is_generated() -> None:
     assert "Critério de aceite." in response
     assert "2 fase(s)" in response
     assert workflow.plan_calls == []
+
+
+def test_on_status_reports_before_rfc_drafting_and_roadmap_generation() -> None:
+    workflow = FakeWorkflow()
+    statuses: list[str] = []
+    current = ConversationActionController(
+        workflow=workflow,
+        repository="tbarletta/demo",
+        constraints=[],
+        execute_issue=lambda number: None,
+        on_status=statuses.append,
+    )
+
+    current.handle("Vamos criar um roadmap de melhorias")
+    current.handle("/aprovar")
+
+    assert "Redigindo a RFC..." in statuses
+    assert "Planejando o roadmap..." in statuses
+
+
+def test_on_status_reports_before_cloning() -> None:
+    workflow = FakeWorkflow()
+    statuses: list[str] = []
+    clones: list[str] = []
+
+    def clone(slug: str) -> CloneOutcome:
+        clones.append(slug)
+        return CloneOutcome(target="/work/demo", files=1, facts=0, symbols=0)
+
+    current = ConversationActionController(
+        workflow=workflow,
+        repository=None,
+        constraints=[],
+        execute_issue=lambda number: None,
+        clone_repository=clone,
+        on_status=statuses.append,
+    )
+
+    current.handle("Clone https://github.com/tbarletta/demo")
+    current.handle("/aprovar")
+
+    assert any("Clonando" in label for label in statuses)
+    assert clones == ["tbarletta/demo"]
+
+
+def test_on_status_reports_before_git_command_execution() -> None:
+    workflow = FakeWorkflow()
+    statuses: list[str] = []
+    commands: list[list[str]] = []
+
+    def run(argv: list[str], rule_id: str | None) -> str:
+        commands.append(argv)
+        return "ok"
+
+    def classify(message: str, repository: str | None) -> dict:
+        return {
+            "intent": "git_command",
+            "repository": None,
+            "phase": None,
+            "git_argv": ["git", "status"],
+        }
+
+    current = ConversationActionController(
+        workflow=workflow,
+        repository="tbarletta/demo",
+        constraints=[],
+        execute_issue=lambda number: None,
+        classify_intent=classify,
+        preview_git_command=lambda argv: ("allow", "git-read"),
+        run_git_command=run,
+        on_status=statuses.append,
+    )
+
+    response = current.handle("como está o repositório?")
+
+    assert response is not None
+    assert "Entendendo o pedido..." in statuses
+    assert any("git status" in label for label in statuses)
+    assert commands == [["git", "status"]]

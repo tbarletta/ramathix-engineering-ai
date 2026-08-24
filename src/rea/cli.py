@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 from collections.abc import Callable
 from configparser import ConfigParser
 from pathlib import Path
@@ -130,6 +133,55 @@ class _WorkspaceState:
         self.root = root
 
 
+class _Spinner:
+    """Live "REA is thinking/building/planning" status line for the conversational REPL.
+
+    ConversationActionController and Level6Workflow report what they're about to do via a
+    plain `label: str -> None` callback (`.set`); nothing else about them needs to know a
+    terminal exists. Silently disabled when stderr isn't a TTY (piped output, CI logs).
+    """
+
+    _FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+    def __init__(self, *, enabled: bool | None = None) -> None:
+        self._label = "Pensando..."
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._enabled = sys.stderr.isatty() if enabled is None else enabled
+
+    def set(self, label: str) -> None:
+        with self._lock:
+            self._label = label
+
+    def _run(self) -> None:
+        start = time.monotonic()
+        index = 0
+        while not self._stop.is_set():
+            with self._lock:
+                label = self._label
+            elapsed = time.monotonic() - start
+            frame = self._FRAMES[index % len(self._FRAMES)]
+            line = f"\r{frame} REA: {label} ({elapsed:0.0f}s)"
+            sys.stderr.write(line.ljust(96))
+            sys.stderr.flush()
+            index += 1
+            self._stop.wait(0.1)
+        sys.stderr.write("\r" + " " * 96 + "\r")
+        sys.stderr.flush()
+
+    def __enter__(self) -> _Spinner:
+        if self._enabled:
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        if self._thread is not None:
+            self._stop.set()
+            self._thread.join(timeout=1)
+
+
 def _run_conversation() -> None:
     settings = Settings.from_env()
     workspace = _WorkspaceState(Path.cwd())
@@ -158,12 +210,17 @@ def _run_conversation() -> None:
             if not message:
                 continue
 
+            spinner = _Spinner()
+            actions.on_status = spinner.set
             try:
-                reply = actions.handle(message)
-                if reply is None:
-                    reply = assistant.reply(message, pending_notice=_pending_notice(actions))
-                else:
-                    assistant.remember(message, reply)
+                with spinner:
+                    spinner.set("Pensando...")
+                    reply = actions.handle(message)
+                    if reply is None:
+                        spinner.set("Conversando...")
+                        reply = assistant.reply(message, pending_notice=_pending_notice(actions))
+                    else:
+                        assistant.remember(message, reply)
             except ConversationError as exc:
                 typer.echo(f"REA> {exc}", err=True)
                 continue
@@ -209,6 +266,7 @@ def _conversation_actions(
             approved_rules={"git-push"},
             allow_network=False,
             max_iterations=3,
+            on_progress=actions.on_status,
         ),
         classify_intent=_build_intent_classifier(router, model),
     )
@@ -580,6 +638,7 @@ def _run_level6_issue(
     approved_rules: set[str],
     allow_network: bool,
     max_iterations: int,
+    on_progress: Callable[[str], None] | None = None,
 ):
     audit = AuditLog(settings.audit_path)
     policy = CommandPolicy.from_yaml(settings.command_policy)
@@ -609,6 +668,7 @@ def _run_level6_issue(
         approved_rules=approved_rules,
         allow_network=allow_network,
         max_iterations=max_iterations,
+        on_progress=on_progress,
     )
 
 
