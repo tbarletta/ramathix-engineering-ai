@@ -22,6 +22,7 @@ from .conversation_actions import (
     INTENT_SCHEMA,
     CloneOutcome,
     ConversationActionController,
+    SessionMode,
 )
 from .domain import Decision
 from .execution import ExecutionApprovalRequired, ExecutionDenied, GovernedLocalRunner
@@ -206,7 +207,7 @@ def _run_conversation() -> None:
     try:
         while True:
             try:
-                message = input("você> ").strip()
+                message = input(f"{_mode_prompt(actions.mode)}você> ").strip()
             except EOFError:
                 typer.echo("\nSessão encerrada.")
                 return
@@ -255,6 +256,13 @@ def _run_conversation() -> None:
                 typer.echo(f"\nREA> {reply}\n")
     except KeyboardInterrupt:
         typer.echo("\nSessão encerrada.")
+
+
+def _mode_prompt(mode: SessionMode) -> str:
+    if mode is SessionMode.DEFAULT:
+        return ""
+    label = "planejamento" if mode is SessionMode.PLAN else "automático"
+    return f"[{label}] "
 
 
 def _pending_notice(actions: ConversationActionController) -> str | None:

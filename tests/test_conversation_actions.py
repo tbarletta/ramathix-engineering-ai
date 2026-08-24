@@ -791,3 +791,175 @@ def test_read_file_intent_without_a_configured_callback_says_so() -> None:
 
     assert response is not None
     assert "não está disponível" in response.lower()
+
+
+def test_mode_slash_command_switches_and_status_reports_it() -> None:
+    workflow = FakeWorkflow()
+    current = controller(workflow, [])
+
+    assert "padrão" in current.handle("/status")
+
+    switched = current.handle("/modo planejamento")
+    assert switched is not None
+    assert "Modo Planejamento" in switched
+    assert "planejamento" in current.handle("/status")
+
+    switched = current.handle("/modo automatico")
+    assert switched is not None
+    assert "Modo Automático" in switched
+    assert "automático" in current.handle("/status")
+
+    switched = current.handle("/modo padrao")
+    assert switched is not None
+    assert "padrão" in switched
+
+
+def test_natural_language_mode_switch_is_recognized() -> None:
+    workflow = FakeWorkflow()
+    current = controller(workflow, [])
+
+    response = current.handle("ativa o modo planejamento")
+
+    assert response is not None
+    assert "Modo Planejamento" in response
+    assert current.mode.value == "plan"
+
+
+def test_plan_mode_blocks_clone_approval_and_preserves_the_pending_action() -> None:
+    workflow = FakeWorkflow()
+    clones: list[str] = []
+    current = clone_controller(workflow, clones)
+
+    current.handle("Clone https://github.com/tbarletta/ramathix-web")
+    current.handle("/modo planejamento")
+
+    blocked = current.handle("/aprovar")
+
+    assert blocked is not None
+    assert "Modo Planejamento" in blocked
+    assert clones == []
+    assert current.pending is not None
+
+    current.handle("/modo padrao")
+    approved = current.handle("/aprovar")
+
+    assert approved is not None
+    assert "Repositório clonado" in approved
+    assert clones == ["tbarletta/ramathix-web"]
+
+
+def test_plan_mode_still_generates_the_roadmap_from_an_approved_rfc() -> None:
+    """Drafting an RFC and turning it into a roadmap only ever writes REA's own .rea/
+    bookkeeping, never the repo or GitHub — so it stays allowed in Plan Mode."""
+    workflow = FakeWorkflow()
+    current = controller(workflow, [])
+    current.handle("/modo planejamento")
+
+    roadmap = _propose_and_approve_roadmap(current)
+
+    assert "Roadmap executável criado" in roadmap
+    assert current.mode.value == "plan"
+
+
+def test_plan_mode_blocks_issue_publication() -> None:
+    workflow = FakeWorkflow()
+    current = controller(workflow, [])
+    _propose_and_approve_roadmap(current)
+    current.handle("Implemente a fase 1")
+    current.handle("/modo planejamento")
+
+    blocked = current.handle("/aprovar")
+
+    assert blocked is not None
+    assert "Modo Planejamento" in blocked
+    assert workflow.publish_calls == []
+    assert current.pending is not None
+
+
+def test_auto_mode_clones_without_requiring_approval() -> None:
+    workflow = FakeWorkflow()
+    clones: list[str] = []
+    current = clone_controller(workflow, clones)
+    current.handle("/modo automatico")
+
+    response = current.handle("Clone https://github.com/tbarletta/ramathix-web")
+
+    assert response is not None
+    assert "Repositório clonado" in response
+    assert clones == ["tbarletta/ramathix-web"]
+    assert current.pending is None
+
+
+def test_auto_mode_runs_a_non_destructive_git_command_without_approval() -> None:
+    workflow = FakeWorkflow()
+    commands: list[list[str]] = []
+
+    def classify(message: str, repository: str | None) -> dict:
+        return {
+            "intent": "git_command",
+            "repository": None,
+            "phase": None,
+            "git_argv": ["git", "checkout", "agent/publica-site-ramathix"],
+        }
+
+    current = git_controller(
+        workflow,
+        commands,
+        repository="tbarletta/ramathix-web",
+        classify_intent=classify,
+        decision="ask",
+        rule_id="git-checkout",
+    )
+    current.handle("/modo automatico")
+
+    response = current.handle("Baixe a branch agent/publica-site-ramathix")
+
+    assert response is not None
+    assert "executado" in response
+    assert commands == [["git", "checkout", "agent/publica-site-ramathix"]]
+    assert current.pending is None
+
+
+def test_auto_mode_still_gates_a_high_risk_git_command() -> None:
+    workflow = FakeWorkflow()
+    commands: list[list[str]] = []
+
+    def classify(message: str, repository: str | None) -> dict:
+        return {
+            "intent": "git_command",
+            "repository": None,
+            "phase": None,
+            "git_argv": ["git", "reset", "--hard", "HEAD~1"],
+        }
+
+    current = git_controller(
+        workflow,
+        commands,
+        repository="tbarletta/ramathix-web",
+        classify_intent=classify,
+        decision="ask",
+        rule_id=None,
+    )
+    current.handle("/modo automatico")
+
+    response = current.handle("descarta o último commit local")
+
+    assert response is not None
+    assert "Comando Git preparado" in response
+    assert "irreversível" in response.lower()
+    assert commands == []
+    assert current.pending is not None
+
+
+def test_auto_mode_does_not_bypass_issue_publication_approval() -> None:
+    workflow = FakeWorkflow()
+    current = controller(workflow, [])
+    _propose_and_approve_roadmap(current)
+    current.handle("/modo automatico")
+
+    prepared = current.handle("Implemente a fase 1")
+
+    assert prepared is not None
+    assert "ainda **não** começou" in prepared
+    assert workflow.publish_calls == []
+    assert current.pending is not None

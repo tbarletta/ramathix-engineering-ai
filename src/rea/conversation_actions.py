@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, Protocol
 
 import httpx
@@ -10,6 +11,18 @@ import httpx
 from .github import extract_github_reference
 from .organization import OrganizationPlan, Rfc, WorkUnit, WorkUnitState
 from .team import CostApprovalRequired
+
+
+class SessionMode(StrEnum):
+    """Mirrors Claude Code's own modes: PLAN never lets anything touch the repo or GitHub
+    (only pure-planning artifacts — RFCs, roadmaps — are ever produced); AUTO skips the
+    /aprovar prompt for local, reversible git state changes the way accepted edits are
+    auto-applied, while anything external or hard to reverse (publishing Issues, Level 6
+    commit/push/PR, high-risk git commands) always stays gated regardless of mode."""
+
+    DEFAULT = "default"
+    PLAN = "plan"
+    AUTO = "auto"
 
 INTENT_CLASSIFIER_SYSTEM_PROMPT = (
     "Você é o classificador de intenção do Ramathix Engineering AI (REA). Você recebe o "
@@ -202,6 +215,7 @@ class ConversationActionController:
         self.plan: OrganizationPlan | None = None
         self.pending: PendingAction | None = None
         self.mentioned_repository: str | None = repository
+        self.mode: SessionMode = SessionMode.DEFAULT
 
     def _report_status(self, label: str) -> None:
         """Report what REA is about to do, for a CLI-level progress indicator to show."""
@@ -217,6 +231,8 @@ class ConversationActionController:
             return self._help()
         if normalized == "/status":
             return self._status()
+        if (mode_request := _parse_mode_request(normalized)) is not None:
+            return self._set_mode(mode_request)
         if normalized == "/cancelar":
             self.pending = None
             return "Ação pendente cancelada. Nenhuma alteração foi executada."
@@ -316,18 +332,13 @@ class ConversationActionController:
         decision, rule_id = self.preview_git_command(argv)
         if decision == "deny":
             return f"O comando `{command_text}` é bloqueado pela política de comandos do REA."
-        if decision == "allow":
-            try:
-                self._report_status(f"Executando `{command_text}`...")
-                output = self.run_git_command(argv, rule_id)
-            except PermissionError as exc:
-                return f"Execução bloqueada por aprovação adicional: {exc}"
-            except (RuntimeError, OSError, ValueError) as exc:
-                return f"Não foi possível executar `{command_text}`: {exc}"
-            return _render_git_output(command_text, output)
+        high_risk = is_high_risk_git_command(argv)
+        if decision == "allow" or (self.mode is SessionMode.AUTO and not high_risk):
+            message, _ok = self._execute_git_command(argv, rule_id)
+            return message
 
         warning = ""
-        if is_high_risk_git_command(argv):
+        if high_risk:
             warning = (
                 "\n\n⚠️ Este comando pode descartar trabalho não commitado ou reescrever "
                 "histórico de forma irreversível."
@@ -339,6 +350,20 @@ class ConversationActionController:
             f"antes de rodar.{warning}\n\n"
             "Digite `/aprovar` para executar ou `/cancelar` para abortar."
         )
+
+    def _execute_git_command(self, argv: list[str], rule_id: str | None) -> tuple[str, bool]:
+        """Returns (message, ok) — ok=False means the caller should keep any pending action
+        around so the user can retry `/aprovar` instead of losing the request on failure."""
+        assert self.run_git_command is not None
+        command_text = " ".join(argv)
+        try:
+            self._report_status(f"Executando `{command_text}`...")
+            output = self.run_git_command(argv, rule_id)
+        except PermissionError as exc:
+            return f"Execução bloqueada por aprovação adicional: {exc}", False
+        except (RuntimeError, OSError, ValueError) as exc:
+            return f"Não foi possível executar `{command_text}`: {exc}", False
+        return _render_git_output(command_text, output), True
 
     def _propose_project(self, request: str) -> str:
         """First step of proposing a project or improvement roadmap: draft an RFC and require
@@ -501,6 +526,9 @@ class ConversationActionController:
             )
         if self.clone_repository is None:
             return "A clonagem de repositórios não está disponível nesta sessão."
+        if self.mode is SessionMode.AUTO:
+            message, _ok = self._execute_clone(reference)
+            return message
         target_hint = ""
         if self.preview_clone_target is not None:
             target_hint = f" em `{self.preview_clone_target(reference)}`"
@@ -512,48 +540,59 @@ class ConversationActionController:
             "Digite `/aprovar` para clonar ou `/cancelar` para abortar."
         )
 
+    def _execute_clone(self, reference: str) -> tuple[str, bool]:
+        """Returns (message, ok) — ok=False means the caller should keep any pending action
+        around so the user can retry `/aprovar` instead of losing the request on failure."""
+        assert self.clone_repository is not None
+        try:
+            self._report_status(f"Clonando `{reference}`...")
+            outcome = self.clone_repository(reference)
+        except httpx.HTTPError:
+            return (
+                "Não foi possível clonar o repositório. Verifique a conectividade e tente "
+                "novamente; nenhuma alteração local foi feita.",
+                False,
+            )
+        except (RuntimeError, OSError, ValueError) as exc:
+            return f"Não foi possível clonar o repositório: {exc}", False
+
+        self.repository = reference
+        self.mentioned_repository = reference
+        return (
+            f"## Repositório clonado: `{reference}`\n\n"
+            f"Local: `{outcome.target}`.\n"
+            f"Mapeado: {outcome.files} arquivos, {outcome.facts} fatos, "
+            f"{outcome.symbols} símbolos.\n\n"
+            "Já posso analisar este repositório. Peça um roadmap de melhorias quando "
+            "quiser planejar o próximo passo.",
+            True,
+        )
+
     def _approve(self) -> str:
         if self.pending is None:
             return "Não há nenhuma ação pendente para aprovar."
         if isinstance(self.pending, PendingRfc):
+            # Generating the roadmap is still pure planning — it only ever writes REA's own
+            # .rea/organization/ bookkeeping — so it stays allowed even in Plan Mode.
             return self._generate_roadmap(self.pending)
+        if self.mode is SessionMode.PLAN:
+            return (
+                "Modo Planejamento ativo: esta ação alteraria o repositório local ou o "
+                "GitHub, então não foi executada. Digite `/modo padrao` para sair do Modo "
+                "Planejamento e depois `/aprovar` de novo."
+            )
         if isinstance(self.pending, PendingGitCommand):
             pending = self.pending
-            assert self.run_git_command is not None
-            command_text = " ".join(pending.argv)
-            try:
-                output = self.run_git_command(list(pending.argv), pending.rule_id)
-            except PermissionError as exc:
-                return f"Execução bloqueada por aprovação adicional: {exc}"
-            except (RuntimeError, OSError, ValueError) as exc:
-                return f"Não foi possível executar `{command_text}`: {exc}"
-            self.pending = None
-            return _render_git_output(command_text, output)
+            message, ok = self._execute_git_command(list(pending.argv), pending.rule_id)
+            if ok:
+                self.pending = None
+            return message
         if isinstance(self.pending, PendingClone):
             pending = self.pending
-            assert self.clone_repository is not None
-            try:
-                self._report_status(f"Clonando `{pending.repository}`...")
-                outcome = self.clone_repository(pending.repository)
-            except httpx.HTTPError:
-                return (
-                    "Não foi possível clonar o repositório. Verifique a conectividade e tente "
-                    "novamente; nenhuma alteração local foi feita."
-                )
-            except (RuntimeError, OSError, ValueError) as exc:
-                return f"Não foi possível clonar o repositório: {exc}"
-
-            self.pending = None
-            self.repository = pending.repository
-            self.mentioned_repository = pending.repository
-            return (
-                f"## Repositório clonado: `{pending.repository}`\n\n"
-                f"Local: `{outcome.target}`.\n"
-                f"Mapeado: {outcome.files} arquivos, {outcome.facts} fatos, "
-                f"{outcome.symbols} símbolos.\n\n"
-                "Já posso analisar este repositório. Peça um roadmap de melhorias quando "
-                "quiser planejar o próximo passo."
-            )
+            message, ok = self._execute_clone(pending.repository)
+            if ok:
+                self.pending = None
+            return message
         if isinstance(self.pending, PendingPublication):
             pending = self.pending
             try:
@@ -624,7 +663,34 @@ class ConversationActionController:
     def _status(self) -> str:
         plan_id = self.plan.id if self.plan else "nenhum"
         pending = type(self.pending).__name__ if self.pending else "nenhuma"
-        return f"Plano ativo: `{plan_id}`. Ação pendente: `{pending}`."
+        return (
+            f"Modo: `{_MODE_LABELS[self.mode]}`. Plano ativo: `{plan_id}`. "
+            f"Ação pendente: `{pending}`."
+        )
+
+    def _set_mode(self, requested: str) -> str:
+        if requested == "show":
+            return f"Modo atual: `{_MODE_LABELS[self.mode]}`."
+        if requested == "plan":
+            self.mode = SessionMode.PLAN
+            return (
+                "## Modo Planejamento ativado\n\n"
+                "REA continua analisando, redigindo RFCs e planejando roadmaps normalmente, "
+                "mas `/aprovar` não executa nada que toque o repositório local ou o GitHub "
+                "enquanto este modo estiver ligado. Digite `/modo padrao` para sair."
+            )
+        if requested == "auto":
+            self.mode = SessionMode.AUTO
+            return (
+                "## Modo Automático ativado\n\n"
+                "Operações locais e reversíveis (clonar, trocar de branch, pull, fetch, "
+                "merge, stash) rodam sem pedir `/aprovar`. Continuam exigindo aprovação "
+                "explícita: publicar Issues no GitHub, executar o Level 6 (commit/push/PR) e "
+                "comandos Git de alto risco (reset --hard, push --force, apagar branch, "
+                "rebase, clean). Digite `/modo padrao` para sair."
+            )
+        self.mode = SessionMode.DEFAULT
+        return "## Modo padrão ativado\n\nTodas as ações voltam a exigir `/aprovar` explícito."
 
     @staticmethod
     def _help() -> str:
@@ -644,13 +710,75 @@ class ConversationActionController:
             "- `/usar org-AAAA...` retoma um plano persistido;\n"
             "- `/aprovar` confirma a ação pendente;\n"
             "- `/executar WU-001` prepara a execução Level 6 de uma Issue publicada;\n"
-            "- `/status` mostra o estado da sessão; `/cancelar` descarta a ação pendente.\n\n"
+            "- `/status` mostra o estado da sessão; `/cancelar` descarta a ação pendente;\n"
+            "- `/modo planejamento` só planeja, nunca toca o repositório/GitHub; `/modo "
+            "automatico` dispensa `/aprovar` para operações locais e reversíveis; `/modo "
+            "padrao` volta ao comportamento normal.\n\n"
             "Frases fora desses padrões também são entendidas: o REA interpreta o pedido "
             "conversacionalmente e prepara a mesma ação governada quando reconhece a intenção. "
             "Comandos que só leem o repositório rodam na hora; qualquer comando que altere o "
             "estado do repositório (inclusive operações irreversíveis, se você pedir "
-            "explicitamente) mostra o comando exato e pede `/aprovar` antes de rodar."
+            "explicitamente) mostra o comando exato e pede `/aprovar` antes de rodar — exceto "
+            "no Modo Automático, onde só as operações locais e reversíveis rodam direto."
         )
+
+
+_MODE_LABELS: dict[SessionMode, str] = {
+    SessionMode.DEFAULT: "padrão",
+    SessionMode.PLAN: "planejamento",
+    SessionMode.AUTO: "automático",
+}
+
+
+def _parse_mode_request(message: str) -> str | None:
+    """Recognizes both the `/modo <nome>` slash form and natural phrasing, returning
+    "show"/"plan"/"auto"/"default", or None if the message isn't a mode-switch request."""
+    if message == "/modo":
+        return "show"
+    if re.fullmatch(r"/modo\s+(planejamento|plano)", message):
+        return "plan"
+    if re.fullmatch(r"/modo\s+(automatico|automático|auto)", message):
+        return "auto"
+    if re.fullmatch(r"/modo\s+(padrao|padrão|normal|default)", message):
+        return "default"
+    if any(
+        phrase in message
+        for phrase in (
+            "modo planejamento",
+            "modo de planejamento",
+            "entra em modo planejamento",
+            "ativa o modo planejamento",
+            "liga o modo planejamento",
+        )
+    ):
+        return "plan"
+    if any(
+        phrase in message
+        for phrase in (
+            "modo automatico",
+            "modo automático",
+            "modo auto",
+            "ativa o modo automatico",
+            "ativa o modo automático",
+            "liga o modo automatico",
+            "liga o modo automático",
+        )
+    ):
+        return "auto"
+    if any(
+        phrase in message
+        for phrase in (
+            "modo padrao",
+            "modo padrão",
+            "modo normal",
+            "desativa o modo",
+            "sai do modo planejamento",
+            "sai do modo automatico",
+            "sai do modo automático",
+        )
+    ):
+        return "default"
+    return None
 
 
 def _is_clone_request(message: str) -> bool:
