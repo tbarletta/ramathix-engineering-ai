@@ -1,15 +1,15 @@
 models:
   reasoner:
     provider: ollama
-    model: qwen3:14b
+    model: gpt-oss:20b
     context_window: 16384
   coder:
     provider: ollama
-    model: qwen3:14b
+    model: gpt-oss:20b
     context_window: 16384
   utility:
     provider: ollama
-    model: qwen3:8b
+    model: gpt-oss:20b
     context_window: 8192
 
 routes:
