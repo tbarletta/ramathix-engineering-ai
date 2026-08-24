@@ -26,6 +26,7 @@ from .conversation_actions import (
 from .domain import Decision
 from .execution import ExecutionApprovalRequired, ExecutionDenied, GovernedLocalRunner
 from .github import GitHubClient, parse_github_slug
+from .governance.redaction import redact_text
 from .initialization import compact_knowledge, discover_repository_roots, map_repository
 from .knowledge import JsonKnowledgeStore, RepositoryScanner
 from .level6 import (
@@ -176,10 +177,16 @@ class _Spinner:
             self._thread.start()
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def stop(self) -> None:
+        """Stop and clear the spinner early — safe to call more than once (e.g. once when
+        the first streamed token arrives, then again harmlessly from `__exit__`)."""
         if self._thread is not None:
             self._stop.set()
             self._thread.join(timeout=1)
+            self._thread = None
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.stop()
 
 
 def _run_conversation() -> None:
@@ -212,13 +219,27 @@ def _run_conversation() -> None:
 
             spinner = _Spinner()
             actions.on_status = spinner.set
+            streamed = False
+
+            def on_token(piece: str, *, _spinner: _Spinner = spinner) -> None:
+                nonlocal streamed
+                if not streamed:
+                    _spinner.stop()
+                    typer.echo("\nREA> ", nl=False)
+                    streamed = True
+                typer.echo(piece, nl=False)
+
             try:
                 with spinner:
                     spinner.set("Pensando...")
                     reply = actions.handle(message)
                     if reply is None:
                         spinner.set("Conversando...")
-                        reply = assistant.reply(message, pending_notice=_pending_notice(actions))
+                        reply = assistant.reply(
+                            message,
+                            pending_notice=_pending_notice(actions),
+                            on_token=on_token,
+                        )
                     else:
                         assistant.remember(message, reply)
             except ConversationError as exc:
@@ -227,7 +248,11 @@ def _run_conversation() -> None:
             except ValueError as exc:
                 typer.echo(f"REA> {exc}", err=True)
                 continue
-            typer.echo(f"\nREA> {reply}\n")
+
+            if streamed:
+                typer.echo("\n")
+            else:
+                typer.echo(f"\nREA> {reply}\n")
     except KeyboardInterrupt:
         typer.echo("\nSessão encerrada.")
 
@@ -278,6 +303,8 @@ def _conversation_actions(
     actions.run_git_command = lambda argv, rule_id: _run_git_command_action(
         settings, workspace, argv, rule_id
     )
+    actions.read_file = lambda path: _read_file_action(workspace, path)
+    actions.list_directory = lambda path: _list_directory_action(workspace, path)
     return actions
 
 
@@ -350,6 +377,50 @@ def _run_git_command_action(
             completed.stderr.strip() or completed.stdout.strip() or "comando git falhou"
         )
     return completed.stdout or completed.stderr
+
+
+_READ_FILE_MAX_BYTES = 200_000
+_READ_FILE_MAX_CHARS = 8_000
+_LIST_DIRECTORY_MAX_ENTRIES = 300
+
+
+def _resolve_workspace_path(root: Path, relative: str) -> Path:
+    root = root.resolve()
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise RuntimeError(f"caminho fora do repositório: {relative}") from None
+    return candidate
+
+
+def _read_file_action(workspace: _WorkspaceState, path: str) -> str:
+    target = _resolve_workspace_path(workspace.root, path)
+    if not target.is_file():
+        raise RuntimeError(f"arquivo não encontrado: {path}")
+    if target.stat().st_size > _READ_FILE_MAX_BYTES:
+        raise RuntimeError(
+            f"arquivo grande demais para exibir (limite {_READ_FILE_MAX_BYTES // 1000}KB)"
+        )
+    text = target.read_text(encoding="utf-8", errors="replace")
+    truncated = text[:_READ_FILE_MAX_CHARS]
+    if len(text) > _READ_FILE_MAX_CHARS:
+        truncated += "\n... (conteúdo truncado)"
+    return redact_text(truncated)
+
+
+def _list_directory_action(workspace: _WorkspaceState, path: str) -> str:
+    target = _resolve_workspace_path(workspace.root, path)
+    if not target.is_dir():
+        raise RuntimeError(f"diretório não encontrado: {path}")
+    entries = sorted(
+        target.iterdir(),
+        key=lambda item: (item.is_file(), item.name.lower()),
+    )
+    lines = [f"{item.name}/" if item.is_dir() else item.name for item in entries]
+    if len(lines) > _LIST_DIRECTORY_MAX_ENTRIES:
+        lines = [*lines[:_LIST_DIRECTORY_MAX_ENTRIES], "... (lista truncada)"]
+    return "\n".join(lines) if lines else "(vazio)"
 
 
 def _clone_repository_action(

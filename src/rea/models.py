@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,36 @@ class OllamaClient:
         if not isinstance(content, str) or not content.strip():
             raise ValueError("Ollama returned an empty chat response")
         return content.strip()
+
+    def chat_stream(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, str]],
+        think: bool = False,
+        max_tokens: int = 384,
+    ) -> Iterator[str]:
+        """Yield response text as it's generated, instead of waiting for the full reply."""
+        payload = {
+            "model": model,
+            "stream": True,
+            "think": think,
+            "options": {"num_predict": max_tokens},
+            "messages": messages,
+        }
+        with httpx.stream(
+            "POST", f"{self.base_url}/api/chat", json=payload, timeout=self.timeout
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                data = json.loads(line)
+                content = data.get("message", {}).get("content")
+                if content:
+                    yield content
+                if data.get("done"):
+                    break
 
     def chat_json(
         self, *, model: str, system: str, user: str, schema: dict[str, Any]

@@ -39,3 +39,38 @@ def redact_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return tuple(redact_value(item) for item in value)
     return value
+
+
+class StreamRedactor:
+    """Buffers streamed model output and only ever releases text that has passed through
+    `redact_text`.
+
+    A naive token-by-token stream could flash an unredacted secret on screen before enough
+    text has arrived to recognize the pattern (a PEM private key block spans many lines).
+    This holds back anything from an unterminated "-----BEGIN...-----" marker onward until
+    its closing marker shows up, so a secret is redacted as a whole before it is ever shown.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = ""
+
+    def feed(self, chunk: str) -> str:
+        self._buffer += chunk
+        begin_at = self._buffer.find("-----BEGIN")
+        if begin_at != -1 and "-----END" not in self._buffer[begin_at:]:
+            return ""  # holding an unterminated secret block; nothing is safe to emit yet
+
+        cut = self._buffer.rfind("\n")
+        if cut == -1:
+            if len(self._buffer) < 160:
+                return ""
+            cut = len(self._buffer)
+        else:
+            cut += 1
+        ready, self._buffer = self._buffer[:cut], self._buffer[cut:]
+        return redact_text(ready) if ready else ""
+
+    def finish(self) -> str:
+        remainder = self._buffer
+        self._buffer = ""
+        return redact_text(remainder) if remainder else ""

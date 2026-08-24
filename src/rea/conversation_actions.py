@@ -27,11 +27,17 @@ INTENT_CLASSIFIER_SYSTEM_PROMPT = (
     'real e completo que o realiza — não simplifique nem invente uma versão genérica. Use '
     '"create_roadmap" quando pedir um roadmap, plano de melhorias ou plano de ação '
     'executável. Use "execute_phase" quando pedir para implementar ou executar uma fase '
-    'específica de um plano já existente. Use "none" para qualquer outra coisa, incluindo '
-    'perguntas, dúvidas ou conversa livre. Preencha "repository" apenas se a mensagem citar '
-    'um repositório de forma explícita, "phase" apenas se citar um número de fase, e '
-    '"git_argv" apenas para "git_command"; caso contrário deixe os campos nulos. Nunca '
-    "invente um repositório, uma fase ou uma branch/ref que o usuário não tenha citado."
+    'específica de um plano já existente. Use "read_file" quando o usuário pedir para ver, '
+    "abrir, mostrar ou ler o conteúdo de um arquivo específico do repositório já clonado — "
+    'preencha "path" com o caminho relativo exato citado (ex.: "package.json", '
+    '"src/app/page.tsx"). Use "list_directory" quando pedir para listar, ver a estrutura ou '
+    'os arquivos de uma pasta — preencha "path" com o caminho relativo citado, ou "." se for '
+    'a raiz do repositório ou nenhuma pasta específica for citada. Use "none" para qualquer '
+    'outra coisa, incluindo perguntas, dúvidas ou conversa livre. Preencha "repository" '
+    'apenas se a mensagem citar um repositório de forma explícita, "phase" apenas se citar '
+    'um número de fase, "git_argv" apenas para "git_command", e "path" apenas para '
+    '"read_file"/"list_directory"; caso contrário deixe os campos nulos. Nunca invente um '
+    "repositório, fase, branch/ref ou caminho de arquivo que o usuário não tenha citado."
 )
 
 INTENT_SCHEMA = {
@@ -44,14 +50,17 @@ INTENT_SCHEMA = {
                 "create_roadmap",
                 "execute_phase",
                 "git_command",
+                "read_file",
+                "list_directory",
                 "none",
             ],
         },
         "repository": {"type": ["string", "null"]},
         "phase": {"type": ["integer", "null"]},
         "git_argv": {"type": ["array", "null"], "items": {"type": "string"}},
+        "path": {"type": ["string", "null"]},
     },
-    "required": ["intent", "repository", "phase", "git_argv"],
+    "required": ["intent", "repository", "phase", "git_argv", "path"],
 }
 
 _HIGH_RISK_GIT_MARKERS: tuple[tuple[str, ...], ...] = (
@@ -174,6 +183,8 @@ class ConversationActionController:
         classify_intent: Callable[[str, str | None], dict[str, Any]] | None = None,
         preview_git_command: Callable[[list[str]], tuple[str, str | None]] | None = None,
         run_git_command: Callable[[list[str], str | None], str] | None = None,
+        read_file: Callable[[str], str] | None = None,
+        list_directory: Callable[[str], str] | None = None,
         on_status: Callable[[str], None] | None = None,
     ) -> None:
         self.workflow = workflow
@@ -185,6 +196,8 @@ class ConversationActionController:
         self.classify_intent = classify_intent
         self.preview_git_command = preview_git_command
         self.run_git_command = run_git_command
+        self.read_file = read_file
+        self.list_directory = list_directory
         self.on_status = on_status
         self.plan: OrganizationPlan | None = None
         self.pending: PendingAction | None = None
@@ -266,7 +279,35 @@ class ConversationActionController:
             ):
                 return None
             return self._prepare_git_command(argv)
+        if kind == "read_file":
+            path = intent.get("path")
+            if not isinstance(path, str) or not path.strip():
+                return None
+            return self._read_file(path.strip())
+        if kind == "list_directory":
+            path = intent.get("path")
+            return self._list_directory(path.strip() if isinstance(path, str) else ".")
         return None
+
+    def _read_file(self, path: str) -> str | None:
+        if self.read_file is None:
+            return "A leitura de arquivos não está disponível nesta sessão."
+        try:
+            self._report_status(f"Lendo `{path}`...")
+            content = self.read_file(path)
+        except (RuntimeError, OSError, ValueError) as exc:
+            return f"Não foi possível ler `{path}`: {exc}"
+        return f"## `{path}`\n\n```\n{content}\n```"
+
+    def _list_directory(self, path: str) -> str | None:
+        if self.list_directory is None:
+            return "A listagem de arquivos não está disponível nesta sessão."
+        try:
+            self._report_status(f"Listando `{path}`...")
+            listing = self.list_directory(path)
+        except (RuntimeError, OSError, ValueError) as exc:
+            return f"Não foi possível listar `{path}`: {exc}"
+        return f"## Conteúdo de `{path}`\n\n```\n{listing}\n```"
 
     def _prepare_git_command(self, argv: list[str]) -> str:
         if self.run_git_command is None or self.preview_git_command is None:
@@ -594,6 +635,8 @@ class ConversationActionController:
             "- com um repositório já clonado, peça qualquer operação Git sobre ele (trocar de "
             "branch, pull, fetch, merge, rebase, stash, reset, status, log, diff, criar/apagar "
             "branch ou tag, commit, push etc.) — o REA traduz para o comando `git` real;\n"
+            "- peça para ver/abrir um arquivo específico, ou listar os arquivos de uma pasta — "
+            "isso é só leitura e roda na hora, sem `/aprovar`;\n"
             "- peça um roadmap de melhorias ou proponha um projeto para receber uma RFC com "
             "contexto, escopo, abordagem, alternativas, riscos e estimativa — só depois de "
             "`/aprovar` a RFC o roadmap executável é gerado;\n"
@@ -690,6 +733,8 @@ def _validate_intent(data: Any) -> dict[str, Any] | None:
         "create_roadmap",
         "execute_phase",
         "git_command",
+        "read_file",
+        "list_directory",
         "none",
     }:
         return None

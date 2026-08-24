@@ -696,3 +696,98 @@ def test_on_status_reports_before_git_command_execution() -> None:
     assert "Entendendo o pedido..." in statuses
     assert any("git status" in label for label in statuses)
     assert commands == [["git", "status"]]
+
+
+def test_read_file_intent_returns_content_without_any_approval() -> None:
+    workflow = FakeWorkflow()
+    reads: list[str] = []
+
+    def read(path: str) -> str:
+        reads.append(path)
+        return '{"name": "demo"}'
+
+    def classify(message: str, repository: str | None) -> dict:
+        return {
+            "intent": "read_file",
+            "repository": None,
+            "phase": None,
+            "git_argv": None,
+            "path": "package.json",
+        }
+
+    current = ConversationActionController(
+        workflow=workflow,
+        repository="tbarletta/demo",
+        constraints=[],
+        execute_issue=lambda number: None,
+        classify_intent=classify,
+        read_file=read,
+    )
+
+    response = current.handle("mostra o package.json pra mim")
+
+    assert response is not None
+    assert "package.json" in response
+    assert '"name": "demo"' in response
+    assert reads == ["package.json"]
+    assert current.pending is None
+
+
+def test_list_directory_intent_returns_listing_without_any_approval() -> None:
+    workflow = FakeWorkflow()
+    listed: list[str] = []
+
+    def listing(path: str) -> str:
+        listed.append(path)
+        return "src/\nREADME.md"
+
+    def classify(message: str, repository: str | None) -> dict:
+        return {
+            "intent": "list_directory",
+            "repository": None,
+            "phase": None,
+            "git_argv": None,
+            "path": "src",
+        }
+
+    current = ConversationActionController(
+        workflow=workflow,
+        repository="tbarletta/demo",
+        constraints=[],
+        execute_issue=lambda number: None,
+        classify_intent=classify,
+        list_directory=listing,
+    )
+
+    response = current.handle("lista os arquivos da pasta src")
+
+    assert response is not None
+    assert "src" in response
+    assert "README.md" in response
+    assert listed == ["src"]
+
+
+def test_read_file_intent_without_a_configured_callback_says_so() -> None:
+    workflow = FakeWorkflow()
+
+    def classify(message: str, repository: str | None) -> dict:
+        return {
+            "intent": "read_file",
+            "repository": None,
+            "phase": None,
+            "git_argv": None,
+            "path": "README.md",
+        }
+
+    current = ConversationActionController(
+        workflow=workflow,
+        repository="tbarletta/demo",
+        constraints=[],
+        execute_issue=lambda number: None,
+        classify_intent=classify,
+    )
+
+    response = current.handle("mostra o README.md")
+
+    assert response is not None
+    assert "não está disponível" in response.lower()

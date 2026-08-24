@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import httpx
 
-from .governance.redaction import redact_text, redact_value
+from .governance.redaction import StreamRedactor, redact_text, redact_value
 from .initialization import render_project_analysis
 from .models import ModelRouter
 
@@ -19,9 +20,9 @@ class ConversationError(RuntimeError):
 
 
 class ConversationalModel(Protocol):
-    def chat(
+    def chat_stream(
         self, *, model: str, messages: list[dict[str, str]], max_tokens: int = ...
-    ) -> str: ...
+    ) -> Iterator[str]: ...
 
 
 @dataclass
@@ -31,13 +32,21 @@ class ConversationAssistant:
     knowledge: dict[str, Any] | None = None
     history: list[dict[str, str]] = field(default_factory=list)
 
-    def reply(self, message: str, *, pending_notice: str | None = None) -> str:
+    def reply(
+        self,
+        message: str,
+        *,
+        pending_notice: str | None = None,
+        on_token: Callable[[str], None] | None = None,
+    ) -> str:
         safe_message = redact_text(message.strip())
         if not safe_message:
             raise ValueError("a message is required")
 
         if _requests_project_analysis(safe_message) and self.knowledge:
             response = render_project_analysis(self.knowledge)
+            if on_token:
+                on_token(response)
         else:
             target = self.router.resolve("engineering_manager")
             messages = [
@@ -46,13 +55,25 @@ class ConversationAssistant:
                 {"role": "user", "content": safe_message},
             ]
             try:
-                response = redact_text(
-                    self.model.chat(
-                        model=target.model,
-                        messages=messages,
-                        max_tokens=CHAT_MAX_TOKENS,
-                    )
-                )
+                parts: list[str] = []
+                redactor = StreamRedactor()
+                for chunk in self.model.chat_stream(
+                    model=target.model,
+                    messages=messages,
+                    max_tokens=CHAT_MAX_TOKENS,
+                ):
+                    parts.append(chunk)
+                    if on_token:
+                        safe_piece = redactor.feed(chunk)
+                        if safe_piece:
+                            on_token(safe_piece)
+                if on_token:
+                    tail = redactor.finish()
+                    if tail:
+                        on_token(tail)
+                response = redact_text("".join(parts)).strip()
+                if not response:
+                    raise ValueError("Ollama returned an empty chat response")
             except httpx.HTTPError as exc:
                 raise ConversationError(
                     "O Ollama não está disponível. Inicie o serviço local e verifique "

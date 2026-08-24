@@ -7,12 +7,14 @@ CONFIG = Path(__file__).parents[1] / "config" / "models.yaml"
 
 
 class FakeConversationModel:
-    def __init__(self) -> None:
+    def __init__(self, reply: str = "Vamos planejar isso juntos.") -> None:
         self.calls: list[dict[str, object]] = []
+        self.reply_text = reply
 
-    def chat(self, *, model: str, messages: list[dict[str, str]], max_tokens: int = 384) -> str:
+    def chat_stream(self, *, model: str, messages: list[dict[str, str]], max_tokens: int = 384):
         self.calls.append({"model": model, "messages": messages, "max_tokens": max_tokens})
-        return "Vamos planejar isso juntos."
+        for word in self.reply_text.split(" "):
+            yield word + " "
 
 
 def test_conversation_uses_reasoner_and_preserves_session_context() -> None:
@@ -74,6 +76,19 @@ def test_project_analysis_uses_deterministic_repository_dossier() -> None:
     assert "src/demo" in response
     assert "3 arquivos de código, 1 classe e 4 funções" in response
     assert model.calls == []
+
+
+def test_reply_streams_redacted_chunks_via_on_token() -> None:
+    long_reply = "Primeira linha da resposta.\nSegunda linha um pouco mais longa.\n" * 4
+    model = FakeConversationModel(reply=long_reply.strip())
+    assistant = ConversationAssistant(ModelRouter.from_yaml(CONFIG), model)
+    received: list[str] = []
+
+    result = assistant.reply("Oi", on_token=received.append)
+
+    assert result == long_reply.strip()
+    assert "".join(received).strip() == result
+    assert len(received) > 1
 
 
 def test_conversation_remembers_governed_controller_outcomes() -> None:
