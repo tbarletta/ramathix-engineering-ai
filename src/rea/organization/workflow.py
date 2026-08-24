@@ -8,10 +8,10 @@ from ..audit import AuditLog
 from ..governance import GovernanceDecision, RiskEngine
 from ..governance.redaction import redact_text
 from ..team import CostApprovalRequired
-from .contracts import OrganizationPlan, WorkUnit, WorkUnitState
+from .contracts import OrganizationPlan, Rfc, WorkUnit, WorkUnitState
 from .manager import AIEngineeringManager
 from .portfolio import PortfolioPlanner
-from .store import OrganizationPlanStore
+from .store import OrganizationPlanStore, RfcStore
 
 
 class GitHubIssuePublisher(Protocol):
@@ -49,6 +49,7 @@ class OrganizationWorkflow:
         github: GitHubIssuePublisher | None = None,
         portfolio: PortfolioPlanner | None = None,
         risk_engine: RiskEngine | None = None,
+        rfc_store: RfcStore | None = None,
     ) -> None:
         self.manager = manager
         self.store = store
@@ -56,9 +57,59 @@ class OrganizationWorkflow:
         self.github = github
         self.portfolio = portfolio or PortfolioPlanner()
         self.risk_engine = risk_engine or RiskEngine()
+        self.rfc_store = rfc_store
 
     def load(self, plan_id: str) -> OrganizationPlan:
         return self.store.load(plan_id)
+
+    def draft_rfc(
+        self,
+        strategic_goal: str,
+        *,
+        repositories: list[str],
+        constraints: list[str],
+    ) -> tuple[Rfc, str]:
+        if self.rfc_store is None:
+            raise RuntimeError("RFC drafting is not configured")
+        if not strategic_goal.strip():
+            raise ValueError("strategic_goal is required")
+        if len(repositories) != 1:
+            raise ValueError("RFC drafting requires exactly one repository")
+
+        safe_goal = redact_text(strategic_goal.strip())
+        safe_constraints = [redact_text(item) for item in constraints]
+        payload = self.manager.draft_rfc(
+            safe_goal,
+            repositories=repositories,
+            constraints=safe_constraints,
+        )
+        rfc = Rfc(
+            id=f"rfc-{datetime.now(UTC).strftime('%Y%m%d')}-{uuid4().hex[:8]}",
+            strategic_goal=safe_goal,
+            repository=repositories[0],
+            context=str(payload["context"]),
+            scope_in=[str(item) for item in payload["scope_in"]],
+            scope_out=[str(item) for item in payload["scope_out"]],
+            approach=str(payload["approach"]),
+            alternatives=[str(item) for item in payload["alternatives"]],
+            risks=[str(item) for item in payload["risks"]],
+            acceptance_criteria=[str(item) for item in payload["acceptance_criteria"]],
+            estimated_phases=int(payload["estimated_phases"]),
+            effort_summary=str(payload["effort_summary"]),
+            created_at=datetime.now(UTC).isoformat(),
+        )
+        path = self.rfc_store.save(rfc)
+        self.audit.write(
+            "organization.rfc_drafted",
+            actor="engineering_manager",
+            data={
+                "rfc": rfc.id,
+                "goal": rfc.strategic_goal,
+                "repository": rfc.repository,
+                "artifact": str(path),
+            },
+        )
+        return rfc, str(path)
 
     def plan(
         self,

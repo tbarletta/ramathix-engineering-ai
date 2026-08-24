@@ -35,7 +35,12 @@ from .level6 import (
 )
 from .models import ModelRouter, OllamaClient
 from .orchestrator import TechLeadAgent
-from .organization import AIEngineeringManager, OrganizationPlanStore, OrganizationWorkflow
+from .organization import (
+    AIEngineeringManager,
+    OrganizationPlanStore,
+    OrganizationWorkflow,
+    RfcStore,
+)
 from .policy import CommandPolicy
 from .sandbox import ApprovalRequired, DockerSandbox, PolicyViolation
 from .team import (
@@ -755,6 +760,7 @@ def _organization_workflow(
         store=OrganizationPlanStore(settings.home / ".rea" / "organization"),
         audit=AuditLog(settings.audit_path),
         github=GitHubClient() if with_github else None,
+        rfc_store=RfcStore(settings.home / ".rea" / "rfcs"),
     )
 
 

@@ -1,7 +1,7 @@
-from .contracts import Initiative, OrganizationPlan, Project, WorkUnit, WorkUnitState
+from .contracts import Initiative, OrganizationPlan, Project, Rfc, WorkUnit, WorkUnitState
 from .manager import AIEngineeringManager
 from .portfolio import DependencyCycleError, PortfolioPlanner, PortfolioValidationError
-from .store import OrganizationPlanStore
+from .store import OrganizationPlanStore, RfcStore
 from .workflow import (
     GovernanceUnitApprovalRequired,
     IssuePublicationApprovalRequired,
@@ -22,6 +22,8 @@ __all__ = [
     "PortfolioPlanner",
     "PortfolioValidationError",
     "Project",
+    "Rfc",
+    "RfcStore",
     "WorkUnit",
     "WorkUnitState",
 ]

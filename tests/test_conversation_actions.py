@@ -7,7 +7,7 @@ from rea.conversation_actions import (
     ConversationActionController,
     is_high_risk_git_command,
 )
-from rea.organization import OrganizationPlan, WorkUnit, WorkUnitState
+from rea.organization import OrganizationPlan, Rfc, WorkUnit, WorkUnitState
 
 
 def _plan() -> OrganizationPlan:
@@ -45,15 +45,45 @@ def _plan() -> OrganizationPlan:
     )
 
 
+def _rfc() -> Rfc:
+    return Rfc(
+        id="rfc-demo",
+        strategic_goal="Melhorar a qualidade",
+        repository="tbarletta/demo",
+        context="Contexto de teste.",
+        scope_in=["Item dentro do escopo."],
+        scope_out=["Item fora do escopo."],
+        approach="Abordagem de teste.",
+        alternatives=["Alternativa considerada."],
+        risks=["Risco identificado."],
+        acceptance_criteria=["Critério de aceite."],
+        estimated_phases=2,
+        effort_summary="Esforço baixo.",
+        created_at="2026-08-22T00:00:00Z",
+    )
+
+
 class FakeWorkflow:
     def __init__(self) -> None:
         self.current = _plan()
+        self.rfc = _rfc()
+        self.rfc_calls: list[dict] = []
         self.plan_calls: list[dict] = []
         self.publish_calls: list[dict] = []
 
     def load(self, plan_id):
         assert plan_id == self.current.id
         return self.current
+
+    def draft_rfc(self, strategic_goal, *, repositories, constraints):
+        self.rfc_calls.append(
+            {
+                "goal": strategic_goal,
+                "repositories": repositories,
+                "constraints": constraints,
+            }
+        )
+        return self.rfc, ".rea/rfcs/rfc-demo.json"
 
     def plan(self, strategic_goal, *, repositories, constraints):
         self.plan_calls.append(
@@ -98,6 +128,18 @@ def controller(workflow: FakeWorkflow, executions: list[int]) -> ConversationAct
         constraints=["Use evidências confirmadas."],
         execute_issue=execute,
     )
+
+
+def _propose_and_approve_roadmap(current: ConversationActionController) -> str:
+    """Drive the two-step propose-a-project flow: draft an RFC, then approve it to get the
+    executable roadmap — used by tests that only care about the roadmap that comes out."""
+    rfc_response = current.handle("Vamos criar um roadmap de melhorias")
+    assert rfc_response is not None
+    assert "RFC proposta" in rfc_response
+
+    roadmap_response = current.handle("/aprovar")
+    assert roadmap_response is not None
+    return roadmap_response
 
 
 def test_is_high_risk_git_command_flags_known_destructive_patterns() -> None:
@@ -383,7 +425,7 @@ def test_natural_approval_phrasing_triggers_the_same_pending_action_as_slash_app
     workflow = FakeWorkflow()
     current = controller(workflow, [])
 
-    current.handle("Vamos criar um roadmap de melhorias")
+    _propose_and_approve_roadmap(current)
     prepared = current.handle("Implemente a fase 1")
     assert prepared is not None
     assert current.pending is not None
@@ -406,7 +448,7 @@ def test_natural_cancellation_phrasing_discards_the_pending_action() -> None:
     workflow = FakeWorkflow()
     current = controller(workflow, [])
 
-    current.handle("Vamos criar um roadmap de melhorias")
+    _propose_and_approve_roadmap(current)
     current.handle("Implemente a fase 1")
     assert current.pending is not None
 
@@ -432,11 +474,12 @@ def test_conversation_action_flow_is_explicit_and_runs_level6_only_after_approva
     executions: list[int] = []
     current = controller(workflow, executions)
 
-    roadmap = current.handle("Vamos criar um roadmap de melhorias")
-    assert roadmap is not None
+    roadmap = _propose_and_approve_roadmap(current)
     assert "Roadmap executável criado" in roadmap
     assert "Fase 1" in roadmap
     assert "Fase 2" in roadmap
+    assert workflow.rfc_calls[0]["repositories"] == ["tbarletta/demo"]
+    assert workflow.rfc_calls[0]["constraints"] == ["Use evidências confirmadas."]
     assert workflow.plan_calls[0]["repositories"] == ["tbarletta/demo"]
     assert workflow.plan_calls[0]["constraints"] == ["Use evidências confirmadas."]
 
@@ -496,7 +539,7 @@ def test_proposed_unit_is_not_published_before_governance_preflight() -> None:
     workflow = FakeWorkflow()
     workflow.current.work_units[0].state = WorkUnitState.PROPOSED
     current = controller(workflow, [])
-    current.handle("Vamos criar um roadmap de melhorias")
+    _propose_and_approve_roadmap(current)
 
     response = current.handle("Implemente a fase 1")
 
@@ -508,7 +551,7 @@ def test_proposed_unit_is_not_published_before_governance_preflight() -> None:
 def test_github_publication_failure_preserves_the_pending_action() -> None:
     workflow = FakeWorkflow()
     current = controller(workflow, [])
-    current.handle("Vamos criar um roadmap de melhorias")
+    _propose_and_approve_roadmap(current)
     current.handle("Implemente a fase 1")
 
     def unavailable(*args, **kwargs):
@@ -522,7 +565,23 @@ def test_github_publication_failure_preserves_the_pending_action() -> None:
     assert current.pending is not None
 
 
-def test_roadmap_model_unavailability_does_not_end_the_conversation() -> None:
+def test_rfc_model_unavailability_does_not_end_the_conversation() -> None:
+    workflow = FakeWorkflow()
+
+    def unavailable(*args, **kwargs):
+        raise httpx.ConnectError("connection refused")
+
+    workflow.draft_rfc = unavailable
+    current = controller(workflow, [])
+
+    response = current.handle("Vamos criar um roadmap de melhorias")
+
+    assert response is not None
+    assert "Ollama não está disponível" in response
+    assert current.pending is None
+
+
+def test_roadmap_model_unavailability_after_rfc_approval_preserves_the_pending_rfc() -> None:
     workflow = FakeWorkflow()
 
     def unavailable(*args, **kwargs):
@@ -531,7 +590,30 @@ def test_roadmap_model_unavailability_does_not_end_the_conversation() -> None:
     workflow.plan = unavailable
     current = controller(workflow, [])
 
-    response = current.handle("Vamos criar um roadmap de melhorias")
+    rfc_response = current.handle("Vamos criar um roadmap de melhorias")
+    assert rfc_response is not None
+    assert "RFC proposta" in rfc_response
+
+    response = current.handle("/aprovar")
 
     assert response is not None
     assert "Ollama não está disponível" in response
+    assert current.pending is not None
+
+
+def test_rfc_content_is_shown_before_any_roadmap_is_generated() -> None:
+    workflow = FakeWorkflow()
+    current = controller(workflow, [])
+
+    response = current.handle("Crie um roadmap para um projeto de autenticação social")
+
+    assert response is not None
+    assert "RFC proposta" in response
+    assert "Contexto de teste." in response
+    assert "Item dentro do escopo." in response
+    assert "Item fora do escopo." in response
+    assert "Alternativa considerada." in response
+    assert "Risco identificado." in response
+    assert "Critério de aceite." in response
+    assert "2 fase(s)" in response
+    assert workflow.plan_calls == []

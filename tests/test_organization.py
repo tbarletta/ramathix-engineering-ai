@@ -14,6 +14,7 @@ from rea.organization import (
     OrganizationWorkflow,
     PortfolioPlanner,
     Project,
+    RfcStore,
     WorkUnit,
     WorkUnitState,
 )
@@ -39,6 +40,19 @@ class FakeManager:
             ],
             self.work_units,
         )
+
+    def draft_rfc(self, strategic_goal, *, repositories, constraints):
+        return {
+            "context": f"Contexto para: {strategic_goal}",
+            "scope_in": ["Fluxo principal"],
+            "scope_out": ["Migração de dados legados"],
+            "approach": "Reutilizar a infraestrutura existente do repositório.",
+            "alternatives": ["Reescrever do zero (descartado por custo)."],
+            "risks": ["Regressão em fluxos não cobertos por teste."],
+            "acceptance_criteria": ["Critério de aceite definido."],
+            "estimated_phases": 3,
+            "effort_summary": "Esforço médio.",
+        }
 
 
 class FakeGitHub:
@@ -84,12 +98,14 @@ def workflow(
     work_units: list[WorkUnit],
     *,
     github=None,
+    with_rfc_store: bool = True,
 ) -> OrganizationWorkflow:
     return OrganizationWorkflow(
         manager=FakeManager(work_units),
         store=OrganizationPlanStore(tmp_path / "org"),
         audit=AuditLog(tmp_path / "audit.jsonl"),
         github=github,
+        rfc_store=RfcStore(tmp_path / "rfcs") if with_rfc_store else None,
     )
 
 
@@ -120,6 +136,42 @@ def test_plan_blocks_declared_production_write(tmp_path: Path) -> None:
     )
     assert planned.work_units[0].state is WorkUnitState.BLOCKED
     assert planned.work_units[0].governance["decision"] == "blocked"
+
+
+def test_draft_rfc_persists_and_returns_the_rfc(tmp_path: Path) -> None:
+    rfc, saved = workflow(tmp_path, [unit("WU-001")]).draft_rfc(
+        "Adicionar autenticação social",
+        repositories=["tbarletta/example"],
+        constraints=["Sem custos adicionais"],
+    )
+
+    assert rfc.repository == "tbarletta/example"
+    assert rfc.strategic_goal == "Adicionar autenticação social"
+    assert rfc.scope_in == ["Fluxo principal"]
+    assert rfc.scope_out == ["Migração de dados legados"]
+    assert rfc.estimated_phases == 3
+    assert Path(saved).is_file()
+    assert Path(saved) == tmp_path / "rfcs" / f"{rfc.id}.json"
+
+
+def test_draft_rfc_requires_a_single_repository(tmp_path: Path) -> None:
+    flow = workflow(tmp_path, [unit("WU-001")])
+    with pytest.raises(ValueError):
+        flow.draft_rfc(
+            "Goal",
+            repositories=["tbarletta/a", "tbarletta/b"],
+            constraints=[],
+        )
+
+
+def test_draft_rfc_without_a_configured_store_raises(tmp_path: Path) -> None:
+    flow = workflow(tmp_path, [unit("WU-001")], with_rfc_store=False)
+    with pytest.raises(RuntimeError):
+        flow.draft_rfc(
+            "Goal",
+            repositories=["tbarletta/example"],
+            constraints=[],
+        )
 
 
 def test_publish_requires_explicit_github_write_approval(tmp_path: Path) -> None:

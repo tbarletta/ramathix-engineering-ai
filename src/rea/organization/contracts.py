@@ -55,6 +55,44 @@ class WorkUnit:
 
 
 @dataclass
+class Rfc:
+    id: str
+    strategic_goal: str
+    repository: str
+    context: str
+    scope_in: list[str]
+    scope_out: list[str]
+    approach: str
+    alternatives: list[str]
+    risks: list[str]
+    acceptance_criteria: list[str]
+    estimated_phases: int
+    effort_summary: str
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> Rfc:
+        return cls(
+            id=str(payload["id"]),
+            strategic_goal=str(payload["strategic_goal"]),
+            repository=str(payload["repository"]),
+            context=str(payload["context"]),
+            scope_in=list(payload.get("scope_in", [])),
+            scope_out=list(payload.get("scope_out", [])),
+            approach=str(payload["approach"]),
+            alternatives=list(payload.get("alternatives", [])),
+            risks=list(payload.get("risks", [])),
+            acceptance_criteria=list(payload.get("acceptance_criteria", [])),
+            estimated_phases=int(payload.get("estimated_phases", 1)),
+            effort_summary=str(payload.get("effort_summary", "")),
+            created_at=str(payload["created_at"]),
+        )
+
+
+@dataclass
 class OrganizationPlan:
     id: str
     strategic_goal: str

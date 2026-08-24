@@ -8,7 +8,7 @@ from typing import Any, Protocol
 import httpx
 
 from .github import extract_github_reference
-from .organization import OrganizationPlan, WorkUnit, WorkUnitState
+from .organization import OrganizationPlan, Rfc, WorkUnit, WorkUnitState
 from .team import CostApprovalRequired
 
 INTENT_CLASSIFIER_SYSTEM_PROMPT = (
@@ -88,6 +88,14 @@ def is_high_risk_git_command(argv: list[str]) -> bool:
 class ConversationPlanner(Protocol):
     def load(self, plan_id: str) -> OrganizationPlan: ...
 
+    def draft_rfc(
+        self,
+        strategic_goal: str,
+        *,
+        repositories: list[str],
+        constraints: list[str],
+    ) -> tuple[Rfc, str]: ...
+
     def plan(
         self,
         strategic_goal: str,
@@ -131,7 +139,16 @@ class PendingGitCommand:
     rule_id: str | None
 
 
-PendingAction = PendingPublication | PendingExecution | PendingClone | PendingGitCommand
+@dataclass(frozen=True)
+class PendingRfc:
+    rfc_id: str
+    goal: str
+    repository: str
+
+
+PendingAction = (
+    PendingPublication | PendingExecution | PendingClone | PendingGitCommand | PendingRfc
+)
 
 
 @dataclass(frozen=True)
@@ -202,7 +219,7 @@ class ConversationActionController:
         if _is_clone_request(normalized) and self.repository is None:
             return self._prepare_clone(reference or self.mentioned_repository)
         if _is_roadmap_request(normalized):
-            return self._create_roadmap(message)
+            return self._propose_project(message)
         if match := re.search(r"\bfase\s*(\d+)\b", normalized):
             if _is_execution_request(normalized):
                 return self._prepare_phase(int(match.group(1)))
@@ -225,7 +242,7 @@ class ConversationActionController:
             reference = intent.get("repository") or self.mentioned_repository
             return self._prepare_clone(reference)
         if kind == "create_roadmap":
-            return self._create_roadmap(message)
+            return self._propose_project(message)
         if kind == "execute_phase":
             phase = intent.get("phase")
             if not isinstance(phase, int):
@@ -273,25 +290,47 @@ class ConversationActionController:
             "Digite `/aprovar` para executar ou `/cancelar` para abortar."
         )
 
-    def _create_roadmap(self, request: str) -> str:
+    def _propose_project(self, request: str) -> str:
+        """First step of proposing a project or improvement roadmap: draft an RFC and require
+        approval before any roadmap, Issue or code exists — nothing is built from this call."""
         if not self.repository:
             return (
-                "Não consigo criar um roadmap executável porque o remote `origin` não aponta "
-                "para um repositório GitHub reconhecido. Configure o remote e reabra o REA."
+                "Não consigo propor um projeto porque o remote `origin` não aponta para um "
+                "repositório GitHub reconhecido. Configure o remote e reabra o REA."
             )
+        goal = _roadmap_goal(request)
         try:
-            plan, saved = self.workflow.plan(
-                _roadmap_goal(request),
+            rfc, saved = self.workflow.draft_rfc(
+                goal,
                 repositories=[self.repository],
                 constraints=self.constraints,
             )
         except httpx.HTTPError:
             return (
-                "O Ollama não está disponível para montar o roadmap. Inicie o serviço local e "
+                "O Ollama não está disponível para redigir a RFC. Inicie o serviço local e "
                 "verifique `rea models status`; a sessão continua aberta."
             )
         except (KeyError, RuntimeError, TypeError, ValueError) as exc:
-            return f"Não foi possível criar o roadmap executável: {exc}"
+            return f"Não foi possível redigir a RFC: {exc}"
+
+        self.pending = PendingRfc(rfc_id=rfc.id, goal=goal, repository=self.repository)
+        return _render_rfc(rfc, saved)
+
+    def _generate_roadmap(self, pending: PendingRfc) -> str:
+        try:
+            plan, saved = self.workflow.plan(
+                pending.goal,
+                repositories=[pending.repository],
+                constraints=self.constraints,
+            )
+        except httpx.HTTPError:
+            return (
+                "O Ollama não está disponível para montar o roadmap. Inicie o serviço local e "
+                "verifique `rea models status`; a RFC continua aprovada e pode ser retomada "
+                "com `/aprovar`."
+            )
+        except (KeyError, RuntimeError, TypeError, ValueError) as exc:
+            return f"Não foi possível criar o roadmap executável a partir da RFC: {exc}"
 
         self.plan = plan
         self.pending = None
@@ -424,6 +463,8 @@ class ConversationActionController:
     def _approve(self) -> str:
         if self.pending is None:
             return "Não há nenhuma ação pendente para aprovar."
+        if isinstance(self.pending, PendingRfc):
+            return self._generate_roadmap(self.pending)
         if isinstance(self.pending, PendingGitCommand):
             pending = self.pending
             assert self.run_git_command is not None
@@ -537,7 +578,9 @@ class ConversationActionController:
             "- com um repositório já clonado, peça qualquer operação Git sobre ele (trocar de "
             "branch, pull, fetch, merge, rebase, stash, reset, status, log, diff, criar/apagar "
             "branch ou tag, commit, push etc.) — o REA traduz para o comando `git` real;\n"
-            "- peça um roadmap de melhorias para criar um plano executável;\n"
+            "- peça um roadmap de melhorias ou proponha um projeto para receber uma RFC com "
+            "contexto, escopo, abordagem, alternativas, riscos e estimativa — só depois de "
+            "`/aprovar` a RFC o roadmap executável é gerado;\n"
             "- `implemente a fase 1` prepara as Issues da fase;\n"
             "- `/usar org-AAAA...` retoma um plano persistido;\n"
             "- `/aprovar` confirma a ação pendente;\n"
@@ -670,6 +713,46 @@ def _phase_groups(plan: OrganizationPlan) -> dict[int, list[WorkUnit]]:
     for unit in sorted(plan.work_units, key=lambda item: item.priority_rank):
         grouped.setdefault(phase_of(unit), []).append(unit)
     return grouped
+
+
+def _render_rfc(rfc: Rfc, saved: str) -> str:
+    def _bullets(items: list[str], fallback: str) -> str:
+        return "\n".join(f"- {item}" for item in items) or f"- {fallback}"
+
+    return "\n".join(
+        [
+            f"## RFC proposta: `{rfc.id}`",
+            "",
+            f"Repositório: `{rfc.repository}`. Artefato: `{saved}`.",
+            "",
+            "### Contexto e objetivo",
+            rfc.context,
+            "",
+            "### Escopo — dentro",
+            _bullets(rfc.scope_in, "(não especificado)"),
+            "",
+            "### Escopo — fora",
+            _bullets(rfc.scope_out, "(não especificado)"),
+            "",
+            "### Abordagem técnica",
+            rfc.approach,
+            "",
+            "### Alternativas consideradas",
+            _bullets(rfc.alternatives, "(nenhuma registrada)"),
+            "",
+            "### Riscos",
+            _bullets(rfc.risks, "(nenhum identificado)"),
+            "",
+            "### Critérios de aceite",
+            _bullets(rfc.acceptance_criteria, "(a definir)"),
+            "",
+            "### Estimativa",
+            f"{rfc.effort_summary} (≈{rfc.estimated_phases} fase(s)).",
+            "",
+            "Nenhum roadmap, Issue, branch ou código foi criado ainda. Revise a RFC e digite "
+            "`/aprovar` para gerar o roadmap executável, ou `/cancelar` para abortar.",
+        ]
+    )
 
 
 def _render_roadmap(plan: OrganizationPlan, saved: str) -> str:
