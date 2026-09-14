@@ -102,6 +102,38 @@ def _components(
     return workflow, suite.name
 
 
+def _promote_if_ready(
+    repository: str,
+    experiment_id: str,
+    pull_request: int,
+    store: JsonEvolutionStore,
+) -> bool:
+    experiment = store.load_experiment(experiment_id)
+    if not experiment.evaluation or not experiment.candidate_ref:
+        return True
+    github = GitHubEvolutionClient()
+    paths = github.changed_paths(repository, experiment.baseline_ref, experiment.candidate_ref)
+    decision = PromotionPolicy().decide(
+        experiment.evaluation,
+        risk=experiment.hypothesis.risk,
+        changed_paths=paths,
+        cost_impact=False,
+        approvals={"tech-lead"},
+    )
+    if not decision.allowed:
+        return True
+    if not github.branch_protected(repository):
+        return False
+    state = github.pull_request_state(repository, pull_request)
+    if state["merged"] or state["state"] == "closed":
+        return True
+    if state["mergeable"] is not True or not github.checks_green(repository, state["sha"]):
+        return False
+    if state["draft"]:
+        github.mark_ready(state["node_id"])
+    return github.merge(repository, pull_request, state["sha"])
+
+
 @app.command("discover")
 def discover(
     repository: str = typer.Option(..., "--repo"),
@@ -183,6 +215,16 @@ def daemon(
         state_store=StateStore(root / "state.json"),
         lock_path=root / "worker.lock",
         event_source=lambda: GitHubEvolutionClient().evolution_records(repository),
+        promotion_handler=(
+            lambda item: _promote_if_ready(
+                repository,
+                item["experiment_id"],
+                int(item["pull_request_url"].rstrip("/").split("/")[-1]),
+                JsonEvolutionStore(root),
+            )
+            if "auto-merge" in set(approve_rule)
+            else False
+        ),
     )
     budget = EvolutionBudget(
         max_experiments=max_experiments,
@@ -210,33 +252,9 @@ def promote(
     if "auto-merge" not in set(approve_rule):
         raise PermissionError("--approve-rule auto-merge is required")
     settings = Settings.from_env()
-    experiment = JsonEvolutionStore(
-        settings.home / ".rea" / "evolution"
-    ).load_experiment(experiment_id)
-    if not experiment.evaluation or not experiment.candidate_ref:
-        raise RuntimeError("experiment has no evaluated candidate")
-    github = GitHubEvolutionClient()
-    paths = github.changed_paths(repository, experiment.baseline_ref, experiment.candidate_ref)
-    decision = PromotionPolicy().decide(
-        experiment.evaluation,
-        risk=experiment.hypothesis.risk,
-        changed_paths=paths,
-        cost_impact=False,
-        approvals={"tech-lead"},
-    )
-    if not decision.allowed:
-        raise PermissionError("; ".join(decision.reasons))
-    if not github.branch_protected(repository):
-        raise RuntimeError("main must be protected before autonomous promotion")
-    state = github.pull_request_state(repository, pull_request)
-    if state["mergeable"] is not True:
-        raise RuntimeError("pull request is conflicting or not mergeable")
-    if not github.checks_green(repository, state["sha"]):
-        raise RuntimeError("required checks are not green")
-    if state["draft"]:
-        github.mark_ready(state["node_id"])
-    if not github.merge(repository, pull_request, state["sha"]):
-        raise RuntimeError("GitHub did not merge the pull request")
+    store = JsonEvolutionStore(settings.home / ".rea" / "evolution")
+    if not _promote_if_ready(repository, experiment_id, pull_request, store):
+        raise RuntimeError("promotion gates or required checks are not ready")
     typer.echo("promoted")
 
 

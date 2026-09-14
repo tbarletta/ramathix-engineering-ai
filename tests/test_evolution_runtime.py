@@ -105,7 +105,11 @@ class FakeWorkflow:
     def run(self, item, **kwargs):
         self.calls += 1
         evaluation = SimpleNamespace(candidate=EvolutionMetrics(gpu_minutes=1))
-        experiment = SimpleNamespace(evaluation=evaluation)
+        experiment = SimpleNamespace(
+            id="exp-1",
+            evaluation=evaluation,
+            pull_request_url="https://github.com/owner/repo/pull/1",
+        )
         return experiment, SimpleNamespace(allowed=True)
 
 

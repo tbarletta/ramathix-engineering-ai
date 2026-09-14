@@ -17,6 +17,7 @@ class EvolutionState:
     gpu_minutes_today: float = 0
     consecutive_failures: int = 0
     cursor: int = 0
+    promotion_queue: list[dict] = field(default_factory=list)
 
 
 class StateStore:

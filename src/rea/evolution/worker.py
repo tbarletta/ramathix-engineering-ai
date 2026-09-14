@@ -22,6 +22,7 @@ class EvolutionWorker:
         lock_path: Path,
         minimum_occurrences: int = 2,
         event_source: Callable[[], list[dict]] | None = None,
+        promotion_handler: Callable[[dict], bool] | None = None,
     ) -> None:
         self.repository = repository
         self.audit_path = audit_path
@@ -30,6 +31,7 @@ class EvolutionWorker:
         self.lock_path = lock_path
         self.detector = OpportunityDetector(minimum_occurrences)
         self.event_source = event_source or (lambda: [])
+        self.promotion_handler = promotion_handler or (lambda _item: False)
 
     def tick(
         self,
@@ -41,6 +43,7 @@ class EvolutionWorker:
         with RepositoryLock(self.lock_path):
             state = self.state_store.load()
             self._roll_budget_day(state)
+            self._reconcile_promotions(state)
             if state.active_experiment:
                 state.consecutive_failures += 1
                 state.active_experiment = None
@@ -78,10 +81,19 @@ class EvolutionWorker:
                     state.consecutive_failures = self.workflow.consecutive_failures
                     state.processed_fingerprints.append(hypothesis.id)
                     state.experiments_today += 1
+                    if _.allowed and experiment.pull_request_url:
+                        state.promotion_queue.append(
+                            {
+                                "experiment_id": experiment.id,
+                                "pull_request_url": experiment.pull_request_url,
+                            }
+                        )
                     completed += 1
                 finally:
                     state.active_experiment = None
                     self.state_store.save(state)
+            self._reconcile_promotions(state)
+            self.state_store.save(state)
             return completed
 
     def daemon(
@@ -99,6 +111,16 @@ class EvolutionWorker:
         while not should_stop():
             self.tick(baseline_ref=baseline_ref, benchmark=benchmark, budget=budget)
             time.sleep(interval_seconds)
+
+    def _reconcile_promotions(self, state: EvolutionState) -> None:
+        pending = []
+        for item in state.promotion_queue:
+            try:
+                if not self.promotion_handler(item):
+                    pending.append(item)
+            except Exception:
+                pending.append(item)
+        state.promotion_queue = pending
 
     def _records(self) -> list[dict]:
         if not self.audit_path.exists():
