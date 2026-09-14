@@ -1,0 +1,8 @@
+{
+  "name": "rea-golden-v1",
+  "commands": [
+    ["python", "-m", "pytest"],
+    ["python", "-m", "ruff", "check", "."]
+  ],
+  "timeout_seconds": 1200
+}

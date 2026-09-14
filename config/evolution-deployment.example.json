@@ -1,0 +1,8 @@
+{
+  "shadow": ["deployctl", "shadow", "--ref", "{candidate}"],
+  "canary": ["deployctl", "canary", "--ref", "{candidate}", "--percent", "{percent}"],
+  "health": ["deployctl", "health", "--deployment", "{deployment}"],
+  "promote": ["deployctl", "promote", "--deployment", "{deployment}"],
+  "rollback": ["deployctl", "rollback", "--deployment", "{deployment}"],
+  "verify_rollback": ["deployctl", "verify-rollback", "--deployment", "{deployment}"]
+}
