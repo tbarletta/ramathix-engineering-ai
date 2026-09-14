@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from ..execution import GovernedLocalRunner
 
 
 @dataclass(frozen=True)
@@ -24,9 +25,18 @@ class DeploymentCommands:
 class CommandDeploymentAdapter:
     """Runs explicitly configured argv templates; shell expansion is never enabled."""
 
-    def __init__(self, commands: DeploymentCommands, cwd: Path) -> None:
+    def __init__(
+        self,
+        commands: DeploymentCommands,
+        cwd: Path,
+        *,
+        runner: GovernedLocalRunner,
+        approved_rules: set[str] | None = None,
+    ) -> None:
         self.commands = commands
         self.cwd = cwd
+        self.runner = runner
+        self.approved_rules = approved_rules or set()
 
     def deploy_shadow(self, candidate_ref: str) -> str:
         return self._run(self.commands.shadow, candidate=candidate_ref)
@@ -59,13 +69,12 @@ class CommandDeploymentAdapter:
             raise RuntimeError("deployment command did not return an identifier")
         return value[-1]
 
-    def _execute(self, command: tuple[str, ...], **values: str) -> subprocess.CompletedProcess:
+    def _execute(self, command: tuple[str, ...], **values: str):
         argv = [part.format_map(values) for part in command]
-        return subprocess.run(
+        return self.runner.run(
             argv,
             cwd=self.cwd,
-            capture_output=True,
-            text=True,
             timeout=900,
-            check=False,
+            approved_rules=self.approved_rules,
+            actor="deployment_controller",
         )
