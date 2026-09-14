@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -708,6 +709,124 @@ class CommandSkillGenerator:
         if result.returncode:
             raise RuntimeError((result.stdout + result.stderr).strip()[-4000:])
         return destination
+
+
+
+class SkillRuntime:
+    def __init__(
+        self,
+        lifecycle: SkillLifecycle,
+        *,
+        image: str = "python:3.12-slim",
+        timeout_seconds: int = 120,
+        executor: Callable[
+            [Path, SkillManifest, dict[str, Any], int],
+            tuple[bool, str],
+        ]
+        | None = None,
+    ) -> None:
+        self.lifecycle = lifecycle
+        self.image = image
+        self.timeout_seconds = timeout_seconds
+        self.executor = executor or self._docker_execute
+
+    def invoke(
+        self,
+        skill_id: str,
+        payload: dict[str, Any],
+        *,
+        granted_permissions: set[str] | None = None,
+    ) -> Any:
+        record = self.lifecycle.registry.get(skill_id)
+        self.lifecycle._verify_integrity(record)
+        protected = self.lifecycle.protected_permissions.intersection(record.permissions)
+        missing = protected.difference(granted_permissions or set())
+        if missing:
+            raise PermissionError(
+                "permissões não concedidas para esta execução: "
+                + ", ".join(sorted(missing))
+            )
+        package = Path(record.package_path)
+        manifest = SkillManifest.load(package)
+        started = time.monotonic()
+        success = False
+        safety_failure = False
+        try:
+            success, output = self.executor(
+                package,
+                manifest,
+                payload,
+                self.timeout_seconds,
+            )
+            if not success:
+                raise RuntimeError(output or "execução da skill falhou")
+            try:
+                return json.loads(output)
+            except json.JSONDecodeError:
+                return output
+        except PermissionError:
+            safety_failure = True
+            raise
+        finally:
+            latency = time.monotonic() - started
+            self.lifecycle.record(
+                skill_id,
+                success=success,
+                latency_seconds=latency,
+                safety_failure=safety_failure,
+            )
+            self.lifecycle.reconcile()
+
+    def _docker_execute(
+        self,
+        package: Path,
+        manifest: SkillManifest,
+        payload: dict[str, Any],
+        timeout_seconds: int,
+    ) -> tuple[bool, str]:
+        argv = [
+            "docker",
+            "run",
+            "--rm",
+            "-i",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "128",
+            "--memory",
+            "512m",
+            "--cpus",
+            "1",
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,size=64m",
+            "-e",
+            "PYTHONDONTWRITEBYTECODE=1",
+            "-v",
+            f"{package.resolve()}:/skill:ro",
+            "-w",
+            "/skill",
+            self.image,
+            "python",
+            manifest.entrypoint,
+        ]
+        try:
+            result = subprocess.run(
+                argv,
+                input=json.dumps(payload, ensure_ascii=False),
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return False, str(exc)
+        output = (result.stdout + result.stderr).strip()[-10000:]
+        return result.returncode == 0, output
 
 
 def temporary_skill_root() -> Path:
