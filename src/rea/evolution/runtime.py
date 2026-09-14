@@ -20,6 +20,7 @@ class BenchmarkSuite:
     commands: tuple[tuple[str, ...], ...]
     coverage_file: str | None = None
     timeout_seconds: int = 1200
+    image: str = "rea-benchmark:1.3.0"
 
     @classmethod
     def from_json(cls, path: Path) -> BenchmarkSuite:
@@ -30,6 +31,7 @@ class BenchmarkSuite:
             commands=commands,
             coverage_file=data.get("coverage_file"),
             timeout_seconds=int(data.get("timeout_seconds", 1200)),
+            image=str(data.get("image", "rea-benchmark:1.3.0")),
         )
 
 
@@ -52,13 +54,28 @@ class GitWorktreeBenchmarkProvider:
                 passed = 0
                 for command in suite.commands:
                     result = subprocess.run(
-                        command,
-                        cwd=root,
+                        [
+                            "docker", "run", "--rm",
+                            "--network", "none",
+                            "--cap-drop", "ALL",
+                            "--security-opt", "no-new-privileges",
+                            "--pids-limit", "256",
+                            "--memory", "2g",
+                            "--cpus", "2",
+                            "--tmpfs", "/tmp:rw,nosuid,size=512m",
+                            "--env", "HOME=/tmp",
+                            "--env", "REA_BENCHMARK=1",
+                            "--env", "PYTHONPATH=/workspace/src",
+                            "--mount", f"type=bind,src={root},dst=/workspace",
+                            "--workdir", "/workspace",
+                            suite.image,
+                            *command,
+                        ],
                         capture_output=True,
                         text=True,
                         timeout=suite.timeout_seconds,
                         check=False,
-                        env={\n                            **os.environ,\n                            "REA_BENCHMARK": "1",\n                            "PYTHONPATH": str(root / "src"),\n                        },
+                        env={"PATH": os.environ.get("PATH", "")},
                     )
                     if result.returncode == 0:
                         passed += 1
