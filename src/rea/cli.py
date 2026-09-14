@@ -24,6 +24,7 @@ from .conversation_actions import (
     SessionMode,
 )
 from .domain import Decision
+from .evolution.skills import DockerSkillRunner, SkillLifecycle, SkillRuntime, SkillValidator
 from .execution import ExecutionApprovalRequired, ExecutionDenied, GovernedLocalRunner
 from .github import GitHubClient, parse_github_slug
 from .governance.redaction import redact_text
