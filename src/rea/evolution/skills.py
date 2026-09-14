@@ -565,6 +565,17 @@ class SkillLifecycle:
                 record = self._active(records, skill_id)
                 manifest = SkillManifest.load(Path(record.package_path))
                 self._verify_integrity(record)
+                active_ids = {
+                    candidate_id
+                    for candidate_id, versions in records.items()
+                    if any(item.status is SkillStatus.ACTIVE for item in versions)
+                }
+                missing_dependencies = set(record.dependencies).difference(active_ids)
+                if missing_dependencies:
+                    raise ValueError(
+                        "dependências deixaram de estar ativas: "
+                        + ", ".join(sorted(missing_dependencies))
+                    )
                 metrics = record.metrics
                 unhealthy = (
                     metrics.safety_failures > 0
