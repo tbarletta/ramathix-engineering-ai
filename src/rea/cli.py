@@ -313,6 +313,21 @@ def _conversation_actions(
     )
     actions.read_file = lambda path: _read_file_action(workspace, path)
     actions.list_directory = lambda path: _list_directory_action(workspace, path)
+    skill_audit = AuditLog(settings.audit_path)
+    skill_lifecycle = SkillLifecycle(
+        settings.home / ".rea" / "skills",
+        SkillValidator(DockerSkillRunner()),
+        audit=lambda event, data: skill_audit.write(
+            event,
+            actor="conversation_skill_runtime",
+            data=data,
+        ),
+    )
+    skill_runtime = SkillRuntime(skill_lifecycle)
+    actions.invoke_skill = lambda skill_id, payload: skill_runtime.invoke(
+        skill_id,
+        payload,
+    )
     return actions
 
 
