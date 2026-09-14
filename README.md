@@ -39,6 +39,25 @@ governança ou escrever em produção.
 - Shadow deployment, canário limitado e rollback verificável.
 - Criação, validação, ativação, observação e rollback autônomo de skills.
 
+## Endurecimento arquitetural V1.3
+
+A V1.3 fecha os principais caminhos de escape identificados na revisão arquitetural:
+
+- benchmarks executam em Docker sem rede, capabilities ou variáveis do host;
+- validações Level 6 abortam se alterarem arquivos fora do plano aprovado;
+- metadados Git são montados somente para leitura durante os testes;
+- métricas de segurança desconhecidas bloqueiam promoção;
+- a análise determinística de segurança integra o benchmark;
+- promoção exige proteção forte da branch e o check obrigatório `validate`;
+- deployment e comandos Git passam pelo executor central governado e auditado;
+- auditoria utiliza IDs persistentes;
+- o registro de skills detecta concorrência e revalida dependências;
+- skills podem evoluir após quarentena ou rollback;
+- a sessão principal pode invocar skills com `/skill ID {JSON}`;
+- o daemon de skills executa continuamente com orçamento por ciclo.
+
+Detalhes: `docs/architecture/V1.3.md`.
+
 ## Requisitos
 
 - Python 3.11 ou superior;
@@ -404,6 +423,17 @@ Uma melhoria na pontuação total não pode compensar uma regressão crítica. F
 segurança, regressões escapadas, queda relevante de cobertura ou queda na taxa de sucesso vetam
 o candidato.
 
+
+### Preparar a imagem isolada de benchmark
+
+```bash
+docker build \
+  -f infra/benchmark/Dockerfile \
+  -t rea-benchmark:1.3.0 .
+```
+
+A autoevolução falha de forma segura quando essa imagem local não está disponível.
+
 ### Descobrir oportunidades
 
 ```bash
@@ -580,10 +610,11 @@ padrão, são necessárias duas ocorrências independentes antes da criação de
 ### Gerar, validar e ativar automaticamente
 
 ```bash
-rea-skills cycle \
+rea-skills daemon \
   --generator-command rea-skill-generator \
   --minimum-occurrences 2 \
-  --max-skills 1
+  --max-skills 1 \
+  --interval 3600
 ```
 
 O gerador configurado recebe a proposta e produz o pacote. A validação funcional acontece em
@@ -703,6 +734,7 @@ rea-evolve canary CANDIDATE_REF --config deployment.json
 
 rea-skills discover --audit .rea/audit.jsonl
 rea-skills cycle --generator-command rea-skill-generator
+rea-skills daemon --generator-command rea-skill-generator --interval 3600
 rea-skills install /caminho/da/skill
 rea-skills invoke skill-exemplo --payload '{"entrada": "valor"}'
 rea-skills record skill-exemplo --success --latency 2.4
@@ -759,6 +791,7 @@ GitHub e as permissões externas continuam sendo a camada final de autoridade.
 | V1.0 | organização de engenharia e portfólio |
 | V1.1 | autoevolução mensurável, worker, promoção e canário |
 | V1.2 | descoberta, geração, validação, runtime, telemetria e rollback de skills |
+| V1.3 | isolamento arquitetural, segurança mensurável e execução unificada |
 
 Os documentos de arquitetura estão em `docs/architecture/`. O manual operacional da
 autoevolução está em `docs/autonomous-evolution-operations.md`.
