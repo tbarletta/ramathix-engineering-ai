@@ -109,6 +109,17 @@ class DockerSandbox:
             "--mount",
             f"type=bind,src={workspace},dst=/workspace",
         ]
+        git_metadata = workspace / ".git"
+        if git_metadata.exists():
+            docker_command.extend(
+                [
+                    "--mount",
+                    (
+                        f"type=bind,src={git_metadata},dst=/workspace/.git,"
+                        "readonly"
+                    ),
+                ]
+            )
         if not network:
             docker_command.extend(["--network", "none"])
         docker_command.extend([image, *argv])
