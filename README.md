@@ -1,261 +1,687 @@
 # Ramathix Engineering AI
 
-**Ramathix Engineering AI (REA)** is a local-first, governed multi-agent software engineering
-platform. You talk to it in a terminal like you would to any AI coding assistant, but every
-action that could change a repository, publish something externally, or cost money passes
-through a deterministic approval gate before it happens — never the LLM's own judgment alone.
+O **Ramathix Engineering AI (REA)** é uma plataforma local, governada e multiagente para
+engenharia de software. Ela funciona como uma organização de engenharia no terminal: compreende
+repositórios, transforma objetivos estratégicos em trabalho executável, implementa mudanças,
+valida código, revisa resultados e abre Pull Requests.
 
-The project deliberately separates **LLM reasoning** from **execution authority**. Models draft
-plans, RFCs, code changes and risk assessments; a set of plain Python components — a command
-policy engine, a risk engine, a portfolio planner, an append-only audit log — decide what is
-actually allowed to run, and everything that runs is logged.
+A partir da versão 1.1, o REA também possui um ciclo de **autoevolução autônoma e mensurável**.
+Ele pode observar falhas recorrentes, criar hipóteses de melhoria, produzir candidatos com o
+motor Level 6, comparar o candidato com a versão de referência, aprender com o resultado e
+promover apenas mudanças que respeitem os limites determinísticos de segurança.
 
-## Quickstart
+O princípio central do projeto é:
+
+> O modelo raciocina e propõe. Componentes determinísticos decidem o que pode ser executado.
+
+Nenhum LLM recebe autoridade irrestrita para alterar repositórios, gastar recursos, modificar
+governança ou escrever em produção.
+
+## Características principais
+
+- Execução 100% local com modelos servidos pelo Ollama.
+- Separação entre raciocínio do LLM e autoridade de execução.
+- Conversação em português brasileiro.
+- Mapeamento determinístico de código, arquitetura, dependências, AST e histórico Git.
+- Organização de trabalho em RFCs, iniciativas, projetos e unidades de trabalho.
+- Equipe multiagente com liderança técnica, desenvolvimento, revisão e especialistas.
+- Execução Level 6: Issue → worktree → implementação → testes → revisão → PR.
+- Sandbox Docker sem acesso à rede por padrão.
+- Governança de segurança, performance, nuvem, custos e produção.
+- Políticas determinísticas para comandos locais.
+- Registro de auditoria append-only com remoção de segredos.
+- Diagnóstico de produção somente leitura.
+- Autoevolução baseada em evidência, benchmarks e comparação com baseline.
+- Memória episódica de sucessos, falhas e correções.
+- Orçamento de GPU, circuit breaker, locks e retomada após reinicialização.
+- Otimização adaptativa da seleção de modelos e prompts.
+- Promoção automática limitada a mudanças comprovadamente seguras.
+- Shadow deployment, canário limitado e rollback verificável.
+
+## Requisitos
+
+- Python 3.11 ou superior;
+- Git;
+- Docker;
+- Ollama em execução;
+- um modelo local compatível;
+- token GitHub para repositórios privados, Issues e Pull Requests;
+- runner self-hosted do GitHub Actions para a CI atual.
+
+## Instalação
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
+source .venv/bin/activate
 python -m pip install -e '.[dev]'
 cp .env.example .env
 ```
 
-Requirements: Python 3.11+, [Ollama](https://ollama.com) running locally, Docker (for sandboxed
-test execution), Git, and a `GITHUB_TOKEN` for private repositories.
+No Windows PowerShell:
 
-Start a conversational session — this is the main entry point for everything below:
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e '.[dev]'
+Copy-Item .env.example .env
+```
+
+Inicie o Ollama antes de executar o REA:
+
+```bash
+ollama serve
+```
+
+## Início rápido
+
+Para abrir a sessão conversacional:
 
 ```bash
 rea
 ```
 
-The session answers in Brazilian Portuguese, keeps context for the terminal session, and — when
-started inside a Git repository — refreshes the deterministic Knowledge Engine inventory first and
-gives the assistant a bounded, factual summary of the repository (never invented details). Type
-`/exit` to close it, `/ajuda` at any time for the full list of conversational commands.
+A sessão:
 
-## How a session works
+1. detecta se o diretório atual é um repositório Git;
+2. atualiza o inventário determinístico do Knowledge Engine;
+3. fornece ao modelo um resumo factual e limitado do repositório;
+4. mantém o contexto das últimas mensagens da sessão;
+5. encaminha ações mutáveis para o controlador de governança.
 
-Every message you type goes through the same pipeline:
+Digite `/ajuda` para consultar os comandos conversacionais e `/exit` para encerrar.
 
-1. A handful of deterministic, instant patterns are checked first (`/aprovar`, `/cancelar`,
-   `/status`, `/modo …`, an explicit GitHub URL, "crie um roadmap…").
-2. If nothing matches, a lightweight local-model **intent classifier** looks at the message
-   (and whether a repository is already cloned) and decides whether it's a clone request, a git
-   operation, a file-read request, a roadmap proposal, a phase execution — or just conversation.
-3. Anything that would **change local repository state, publish something externally, or cost
-   money** is either run immediately (if it's a pure read) or shown to you as an exact preview —
-   the literal `git` command, the RFC, the list of Issues about to be created — and waits for
-   `/aprovar`. Nothing is ever described as done before the governed controller actually returns
-   that result.
-4. Anything else falls through to free-form chat, streamed token-by-token as it's generated. A
-   live status line (`⠋ REA: Redigindo a RFC... (12s)`) shows what's happening for as long as a
-   step takes, instead of leaving you staring at a blank prompt.
+## Como uma solicitação é processada
 
-### What you can just ask for, in plain language
+Cada mensagem passa pelo seguinte fluxo:
 
-- **Clone a repository** — paste a GitHub URL (`clone https://github.com/owner/repo`, or mention
-  it once and say "baixa esse repositório" later). It clones into the current directory if empty,
-  or into a subdirectory named after the repo otherwise, and immediately maps its knowledge.
-- **Any git operation** — "troca pra branch X", "dá um pull", "qual o status?", "lista as tags",
-  "faz merge da branch Y". The classifier translates it into the real `git` command. Pure reads
-  (`status`, `log`, `diff`, `branch -a`, `tag`, `remote -v`) run immediately; anything that
-  changes state shows the exact command first. Commands matching a known-destructive pattern
-  (`reset --hard`, `push --force`, `branch -D`, `rebase`, `clean`) get an extra warning but are
-  never silently blocked — you decide.
-- **Read a file or list a directory** — "mostra o package.json", "lista os arquivos de src/" —
-  pure reads, run instantly, no approval needed, content is redacted for secret-shaped strings
-  before being shown and confined to the repository root.
-- **Propose a project or ask for an improvement roadmap** — this always drafts an **RFC** first
-  (context, scope in/out, technical approach, alternatives considered, risks, acceptance
-  criteria, a phase estimate) and shows it in full. Only after you `/aprovar` the RFC does REA
-  generate the executable roadmap — Initiatives → Projects → Work Units, prioritized and
-  dependency-ordered. `implemente a fase 1` then prepares that phase's GitHub Issues for another
-  explicit approval, and `/executar WU-001` prepares a governed Level 6 run (worktree, sandboxed
-  tests, independent review, commit, push, draft PR) behind a third.
-- **Natural approval/cancellation** — while something is pending, "aprovado, pode seguir" or
-  "cancela isso" work the same as `/aprovar`/`/cancelar`. This exists specifically so a natural
-  reply never falls through to free chat and gets narrated as if it had happened — that's the one
-  failure mode the whole governance model exists to prevent.
+1. padrões determinísticos verificam comandos como `/aprovar`, `/cancelar`, `/status`,
+   mudança de modo, URLs GitHub e solicitações conhecidas;
+2. se nenhum padrão for encontrado, um classificador local identifica a intenção;
+3. leituras seguras podem ser executadas imediatamente;
+4. ações mutáveis exibem uma prévia e aguardam aprovação;
+5. a política de comandos e o motor de risco avaliam a ação;
+6. a execução real é realizada por componentes Python governados;
+7. o resultado é registrado no audit log antes de ser apresentado como concluído.
 
-### Session modes
+O REA nunca descreve uma operação como concluída antes de receber o resultado real do executor.
+
+## Exemplos de solicitações
+
+Na conversa, você pode pedir:
+
+- “Analise este repositório.”
+- “Clone https://github.com/owner/repo.”
+- “Mostre o package.json.”
+- “Qual é o status do Git?”
+- “Crie uma RFC para melhorar a confiabilidade do sistema.”
+- “Monte um roadmap para reduzir o custo de infraestrutura.”
+- “Implemente a fase 1.”
+- “Execute a Issue 42.”
+- “Analise este incidente de produção.”
+
+## Modos da sessão
+
+### Modo padrão
 
 ```text
-/modo planejamento   REA continues analyzing, drafting RFCs and generating roadmaps (those only
-                      ever write REA's own .rea/ bookkeeping), but /aprovar refuses to execute
-                      anything that would touch the repository or GitHub — cloning, git commands,
-                      publishing Issues, Level 6 execution — until you leave this mode.
-
-/modo automatico      Skips /aprovar for local, reversible git state changes only: cloning,
-                      checkout, pull, fetch, merge, stash. Publishing Issues, Level 6
-                      (commit/push/PR), and anything flagged high-risk still require explicit
-                      approval, regardless of mode.
-
-/modo padrao          Back to the default: reads run free, everything else asks first.
+/modo padrao
 ```
 
-The prompt shows the active mode (`[automático] você>`). `/status` also reports it.
+Leituras seguras são executadas diretamente. Mudanças locais, GitHub e operações compartilhadas
+pedem aprovação.
 
-## Governance model
-
-The pending-action pattern above is implemented once, generically, in the conversation
-controller — every governed action (clone, git command, RFC→roadmap, Issue publication, Level 6
-execution) is a `Pending*` value; `/aprovar` resolves whichever one is outstanding, and a failed
-approval preserves it so you can retry instead of losing the request.
-
-Underneath that, three independent layers actually decide what's allowed:
-
-- **Command policy** (`config/policies/commands.yaml`) — an allow/ask/deny/cost-approval
-  allowlist for every local command REA might run. Pure reads and safe local writes (`git
-  status`, `git commit`, running the project's own test suite) are `allow`; anything that mutates
-  shared state (`git push`, `git clone`, `checkout`, `pull`, `merge`, `stash`, installing
-  dependencies) is `ask`; provisioning cloud resources is `cost_approval` (always requires an
-  explicit human token, never inferred from a general approval); `sudo`, `rm -rf /`,
-  `kubectl delete`, `docker system prune` are hard `deny`.
-- **Risk engine** (`governance/risk.py`) — for organization Work Units and Level 6 execution:
-  Security, Performance, Cloud Architect and FinOps specialist agents produce findings, but a
-  deterministic engine owns the final decision. Precedence is fixed: a declared production write
-  is always `blocked`; any cost impact is always `cost_approval`; critical risk needs explicit
-  human approval; high risk needs explicit Tech Lead approval; medium is governed; low is
-  autonomous. A specialist can escalate risk, never lower what was already detected.
-- **Audit log** (`.rea/audit.jsonl`) — every policy check, command execution, governance
-  decision and organization/RFC/Level 6 milestone is appended as a JSON record, with secrets
-  redacted (`governance/redaction.py`) before being written or ever shown — including mid-stream:
-  a `StreamRedactor` holds back an unterminated PEM-style key block until its closing marker
-  arrives (or the response ends), so a secret can't flash on screen before it's caught.
-
-Priority order when REA has to decide what's true about a repository or a decision: an explicit
-human-approved decision, then an approved ADR, then a documented business rule, then production
-code, then documentation, then Git history, then AI inference last. Any action with a monetary
-cost implication requires human approval — there is no autonomous mode that skips this.
-
-## Architecture
+### Modo de planejamento
 
 ```text
-cli.py                     conversational REPL + all `rea …` subcommands (entry point)
-conversation.py            free-chat assistant: streaming replies, redaction, system prompt
-conversation_actions.py    the governed-action controller: intent routing, Pending* states,
-                            session modes, natural-language approval, RFC/roadmap orchestration
-
-knowledge/                 deterministic repository reverse engineering (no LLM): languages,
-                            manifests, frameworks, persistence/queues/infra, AST symbols and
-                            import graph, governed Git history, confidence-tagged facts
-
-organization/               AI Engineering Manager: strategic goal → RFC → Initiatives →
-                            Projects → Work Units, deterministic priority + dependency ordering,
-                            risk preflight, GitHub Issue publication
-team/                       first AI team: Engineering Manager → Tech Lead → Senior Developer →
-                            Code Reviewer, structured work packages and independent review
-specialists/                routes Tech Lead tasks to Backend/Frontend/Mobile/Database/
-                            DevOps-SRE/QA agents while reusing the same Level 6 engine
-governance/                 Security/Performance/Cloud/FinOps specialist agents + the
-                            deterministic risk engine that owns the final decision
-level6/                     the autonomous Issue-to-PR engine: isolated git worktree, bounded
-                            implement→validate→review loop, commit, approved push, draft PR
-production/                 read-only production incident diagnosis (logs/metrics/traces/
-                            deploys/Git correlation) — proposals only, no production write path
-
-execution.py, policy.py     governed local command execution against the command policy
-sandbox.py                  Docker sandbox for test/validation commands (network off by default)
-audit.py, governance/
-  redaction.py               append-only audit log; secret redaction, including a streaming-safe
-                             buffered variant
-github.py                   GitHub REST client + URL/slug parsing
-models.py                   Ollama client (blocking, streaming, and structured-JSON chat) +
-                             role→model router
-config.py                   settings resolution: env var overrides, checkout config vs the
-                             bundled fallback copy under resources/
+/modo planejamento
 ```
 
-## Memory / persistence (`.rea/`)
+Permite análise, RFCs e roadmaps, mas impede ações que alterem o repositório ou o GitHub.
 
-Everything REA remembers across commands lives under `.rea/` in the current `REA_HOME` (the
-working directory by default) — nothing is silently kept only in a chat session's memory:
+### Modo automático
 
-| Path | What's in it |
-|---|---|
-| `.rea/knowledge/` | One JSON inventory per repository scanned: languages, manifests, facts, symbols, architecture, Git summary. Refreshed on every `rea` startup and after every clone. |
-| `.rea/rfcs/` | Every drafted RFC (`rfc-YYYYMMDD-xxxxxxxx.json`) — context, scope, approach, alternatives, risks, acceptance criteria, phase estimate. Written before a roadmap exists. |
-| `.rea/organization/` | Every generated roadmap (`org-YYYYMMDD-xxxxxxxx.json`) — Initiatives, Projects, Work Units, priority, dependencies, governance state, published Issue references. Publication state is saved after each Issue creation, so a partial failure never discards already-published work. `/usar <plan-id>` resumes one in a later session. |
-| `.rea/work/` | Structured work packages from the first AI team and Level 6 execution artifacts (per-iteration coding/validation/review records). |
-| `.rea/worktrees/` | Isolated Git worktrees Level 6 creates per Issue — the base branch is never edited directly. |
-| `.rea/incidents/` | Production incident analyses and Markdown postmortems from the read-only SRE workflow. |
-| `.rea/audit.jsonl` | The append-only, secret-redacted record of every policy check, command run, and governance/organization/RFC/Level 6 event. |
+```text
+/modo automatico
+```
 
-The in-terminal chat history itself (the last 12 turns, used so the assistant remembers what you
-just said) is **not** persisted — it lives only for the current process. What *is* durable across
-restarts is exactly the artifacts above, plus whatever the governed actions actually changed in
-the repository itself (commits, branches, GitHub Issues/PRs).
+Pode executar automaticamente mudanças Git locais e reversíveis. Publicação de Issues,
+execução Level 6, custos, push, merge e produção continuam sujeitos às regras específicas.
 
-## Configuration
+## Arquitetura
 
-- **`config/models.yaml`** — maps three roles (`reasoner`, `coder`, `utility`) to an Ollama model
-  each, and routes every specialist (`tech_lead`, `senior_backend`, `security`, `finops`, …) to
-  one of those roles. Swapping a model means editing this file — no agent or governance code
-  changes. All three roles currently point at the same model deliberately: on a single GPU, two
-  different models loaded at once can exceed available VRAM and force Ollama to reload from disk
-  every time REA switches between an intent-classification call and a drafting call.
-- **`config/policies/commands.yaml`** — the command allowlist described above.
-- **Env vars** (see `.env.example`) — `REA_HOME`, `REA_OLLAMA_URL`, `REA_AUDIT_PATH`,
-  `REA_COMMAND_POLICY`, `REA_MODEL_CONFIG`, `REA_KNOWLEDGE_PATH`, `REA_WORK_PATH`,
-  `REA_WORKTREE_PATH` override the defaults above. Config files are resolved from the current
-  checkout first, falling back to a bundled copy under `src/rea/resources/` for installs that run
-  outside a checkout — the two are kept identical (enforced by a test).
+```text
+src/rea/
+├── cli.py                    sessão conversacional e comandos principais
+├── conversation.py           conversa, streaming e contexto
+├── conversation_actions.py   roteamento de intenção e ações pendentes
+├── config.py                 resolução de configurações
+├── models.py                 Ollama e roteamento de modelos
+├── policy.py                 política determinística de comandos
+├── execution.py              execução local governada
+├── sandbox.py                execução isolada em Docker
+├── audit.py                  auditoria persistente
+├── github.py                 cliente GitHub
+├── knowledge/                engenharia reversa determinística
+├── organization/             objetivos, RFCs, projetos e portfólio
+├── team/                     equipe principal de engenharia
+├── specialists/              agentes especializados
+├── governance/               risco, segurança, performance, nuvem e FinOps
+├── level6/                   motor autônomo de Issue para PR
+├── production/               diagnóstico de produção somente leitura
+└── evolution/                controle de autoevolução autônoma
+```
 
-## CLI reference
+## Knowledge Engine
+
+O Knowledge Engine não depende de inferência do LLM para afirmar fatos sobre um repositório.
+Ele coleta:
+
+- linguagens;
+- manifests;
+- frameworks;
+- persistência;
+- filas;
+- infraestrutura;
+- símbolos AST;
+- imports;
+- dependências;
+- arquitetura inferida com nível de confiança;
+- histórico Git governado.
+
+A prioridade das fontes é:
+
+1. decisão humana explicitamente aprovada;
+2. ADR aprovado;
+3. regra de negócio documentada;
+4. código de produção;
+5. documentação;
+6. histórico Git;
+7. inferência de IA.
+
+## Organização de engenharia
+
+O REA transforma um objetivo estratégico na seguinte hierarquia:
+
+```text
+Objetivo estratégico
+└── Iniciativas
+    └── Projetos
+        └── Unidades de trabalho
+```
+
+O planejador de portfólio valida dependências, calcula prioridade e executa uma pré-análise de
+governança antes de publicar qualquer Issue.
+
+A pontuação de prioridade é determinística:
+
+```text
+prioridade = valor_de_negócio × 5
+           + alinhamento_estratégico × 4
+           + urgência × 3
+           - esforço × 2
+```
+
+Dependências sempre têm precedência sobre a pontuação.
+
+## Equipe multiagente
+
+O fluxo principal inclui:
+
+- Engineering Manager;
+- Tech Lead;
+- Senior Developer;
+- Code Reviewer.
+
+Especialistas disponíveis:
+
+- Backend;
+- Frontend;
+- Mobile;
+- Banco de Dados;
+- DevOps/SRE;
+- QA;
+- Segurança;
+- Performance;
+- Cloud Architecture;
+- FinOps.
+
+Os especialistas podem aumentar o risco detectado, mas não podem reduzir uma classificação
+determinística existente.
+
+## Level 6: Issue para Pull Request
+
+O Level 6 executa uma Issue de ponta a ponta:
+
+1. carrega a Issue;
+2. cria o pacote de engenharia;
+3. executa a governança especializada;
+4. prepara um Git worktree isolado;
+5. limita os arquivos que podem ser modificados;
+6. solicita uma implementação ao agente desenvolvedor;
+7. aplica as mudanças;
+8. executa testes e validações em sandbox;
+9. devolve falhas ao desenvolvedor para uma nova iteração;
+10. obtém uma revisão independente;
+11. cria commit;
+12. envia a branch;
+13. abre um Pull Request em modo draft.
+
+O loop possui limite configurável entre uma e oito tentativas. O limite evita consumo infinito de
+GPU e mudanças repetitivas sem progresso.
+
+Exemplo:
 
 ```bash
-rea                                    # start the conversational session (default, no args)
-rea init . [--workspace]               # map one repo, or every Git repo under a workspace
-rea status                             # current settings and storage paths
-rea models status                      # which Ollama model backs each role, and whether it's pulled
-rea policy check "git status"          # what the command policy decides for a given command
+rea issue run 42 \
+  --repo owner/repository \
+  --workspace /workspace/repository \
+  --base main \
+  --approve-rule git-push
+```
 
-rea repo scan ../some-repo [--json]    # deterministic knowledge scan
-rea repo list                          # every repository REA has mapped
+## Governança
 
-rea org plan "<goal>" --repo o/r [--constraint "..."]
-rea org list / rea org show <plan-id>
-rea org publish <plan-id> --approve-rule github-issue-create [--unit WU-...] [--approve-tech-lead WU-...] [--approve-human WU-...] [--approve-cost WU-...]
+### Política de comandos
 
-rea governance assess .rea/work/issue-N-plan.json
+O arquivo `config/policies/commands.yaml` classifica comandos como:
 
-rea team plan <issue> --repo o/r       # first-team structured work package
-rea team review <plan.json>
-rea-agents capabilities                # specialist routing table
-rea-agents route-plan <plan.json>
+- `allow`: permitido;
+- `ask`: exige aprovação;
+- `deny`: bloqueado;
+- `cost_approval`: exige autorização específica de custo.
 
-rea issue analyze <issue> --repo o/r
-rea issue run <issue> --repo o/r --workspace ../repo --base main --approve-rule git-push [--approve-rule dependency-install --allow-network]
+Operações como `sudo`, remoção destrutiva ampla, limpeza global do Docker e exclusões de
+produção são bloqueadas.
+
+### Motor de risco
+
+O motor avalia:
+
+- risco de segurança;
+- risco de performance;
+- impacto arquitetural;
+- impacto financeiro;
+- mudanças em produção;
+- comandos solicitados;
+- criticidade declarada.
+
+Precedência:
+
+1. escrita em produção declarada: bloqueada;
+2. impacto financeiro: aprovação de custo;
+3. risco crítico: aprovação humana;
+4. risco alto: aprovação de Tech Lead;
+5. risco médio: execução governada;
+6. risco baixo: elegível para autonomia.
+
+### Auditoria e proteção de segredos
+
+Cada decisão e execução é registrada em `.rea/audit.jsonl`.
+
+O REA remove valores com formato de:
+
+- tokens;
+- senhas;
+- chaves de API;
+- chaves privadas;
+- credenciais de nuvem;
+- arquivos sensíveis.
+
+A remoção também funciona durante streaming para impedir que uma chave incompleta apareça
+temporariamente na tela.
+
+## Diagnóstico de produção
+
+O módulo de produção coleta evidências de:
+
+- logs;
+- métricas;
+- traces;
+- deployments;
+- histórico Git.
+
+Ele correlaciona evidências, cria hipóteses de causa raiz, propõe remediações e produz postmortems.
+Por padrão, nenhuma ação de escrita em produção é permitida.
+
+```bash
+rea incident analyze INC-001 \
+  --service payments \
+  --title "Aumento de erros 5xx" \
+  --signals ./signals.jsonl
+```
+
+## Autoevolução autônoma
+
+A versão 1.1 fecha o ciclo em torno do Level 6:
+
+```text
+Observar
+→ detectar recorrências
+→ criar hipótese mensurável
+→ recuperar lições anteriores
+→ construir candidato
+→ medir baseline e candidato
+→ rejeitar regressões
+→ abrir PR
+→ acompanhar CI
+→ promover com segurança
+→ observar o resultado
+→ aprender
+```
+
+### Componentes
+
+| Componente | Responsabilidade |
+|---|---|
+| `AuditObserver` | Normaliza eventos locais |
+| `GitHubEvolutionClient` | Coleta falhas de CI e opera Issues/PRs |
+| `OpportunityDetector` | Exige evidências recorrentes |
+| `Level6CandidateBuilder` | Conecta hipóteses ao Level 6 |
+| `GitWorktreeBenchmarkProvider` | Mede refs em worktrees descartáveis |
+| `EvaluationEngine` | Compara baseline e candidato |
+| `JsonEvolutionStore` | Persiste experimentos e lições |
+| `EvolutionWorker` | Executa o ciclo contínuo |
+| `ModelPromptOptimizer` | Seleciona candidatos por recompensa |
+| `PromotionPolicy` | Decide se uma mudança pode avançar |
+| `CanaryController` | Controla shadow, canário e rollback |
+
+### Função de evolução
+
+A avaliação considera:
+
+- taxa de sucesso;
+- sucesso na primeira tentativa;
+- cobertura;
+- regressões;
+- intervenções humanas;
+- falhas de segurança;
+- latência;
+- tempo de GPU.
+
+Uma melhoria na pontuação total não pode compensar uma regressão crítica. Falhas adicionais de
+segurança, regressões escapadas, queda relevante de cobertura ou queda na taxa de sucesso vetam
+o candidato.
+
+### Descobrir oportunidades
+
+```bash
+rea-evolve discover \
+  --repo owner/repository \
+  --audit .rea/audit.jsonl \
+  --output hypotheses.json
+```
+
+O detector exige recorrência. Um evento isolado não se transforma automaticamente em mudança.
+
+### Executar um experimento
+
+Selecione uma hipótese produzida pelo comando anterior:
+
+```bash
+rea-evolve run hypothesis.json \
+  --repo owner/repository \
+  --workspace /workspace/repository \
+  --approve-rule github-issue-create \
+  --approve-rule git-push
+```
+
+O processo:
+
+1. recupera lições relacionadas;
+2. cria uma Issue com evidências;
+3. executa o Level 6;
+4. gera uma branch e um PR;
+5. mede o baseline;
+6. mede o candidato;
+7. registra a decisão;
+8. persiste uma nova lição.
+
+### Worker contínuo
+
+```bash
+rea-evolve daemon \
+  --repo owner/repository \
+  --workspace /workspace/repository \
+  --approve-rule github-issue-create \
+  --approve-rule git-push \
+  --approve-rule auto-merge \
+  --max-experiments 2 \
+  --max-gpu-minutes 60
+```
+
+O daemon:
+
+- utiliza lock por repositório;
+- persiste estado;
+- retoma após reinicialização;
+- impede hipóteses duplicadas;
+- limita experimentos por dia;
+- limita consumo de GPU;
+- abre o circuit breaker após falhas consecutivas;
+- mantém uma fila persistente de promoções;
+- verifica novamente as PRs em cada ciclo;
+- realiza merge apenas quando todos os gates estiverem satisfeitos.
+
+Para executar uma única iteração por cron ou systemd:
+
+```bash
+rea-evolve daemon [opções] --once
+```
+
+### Seleção adaptativa de modelos
+
+Configure os modelos candidatos:
+
+```bash
+export REA_EVOLUTION_MODELS="qwen3-coder:30b,qwen3:14b"
+```
+
+No PowerShell:
+
+```powershell
+$env:REA_EVOLUTION_MODELS="qwen3-coder:30b,qwen3:14b"
+```
+
+O otimizador UCB1 explora os modelos disponíveis e utiliza o resultado dos benchmarks como
+recompensa. Ele altera apenas o roteamento do experimento; não modifica os pesos dos modelos.
+
+### Promoção
+
+Promoção manual governada:
+
+```bash
+rea-evolve promote EXPERIMENT_ID \
+  --pr 123 \
+  --repo owner/repository \
+  --approve-rule auto-merge
+```
+
+A promoção automática falha de forma segura se:
+
+- a branch `main` não estiver protegida;
+- a CI não estiver verde;
+- o PR possuir conflito;
+- o candidato não superar o baseline;
+- houver regressão crítica;
+- houver impacto financeiro;
+- o risco for alto ou crítico;
+- a mudança alterar arquivos protegidos.
+
+Arquivos protegidos incluem governança, políticas, CI e o próprio controlador de promoção. O
+agente não pode modificar e aprovar sua própria autoridade no mesmo experimento.
+
+### Shadow, canário e rollback
+
+Copie e adapte:
+
+```text
+config/evolution-deployment.example.json
+```
+
+Execute:
+
+```bash
+rea-evolve canary CANDIDATE_REF \
+  --config /caminho/seguro/deployment.json \
+  --workspace /workspace/repository \
+  --approve-rule production-canary \
+  --max-percent 10
+```
+
+O controlador:
+
+1. realiza shadow deployment;
+2. verifica a saúde do shadow;
+3. exige aprovação explícita para produção;
+4. limita o canário entre 1% e 25%;
+5. verifica a saúde do canário;
+6. promove se estiver saudável;
+7. executa rollback se houver degradação;
+8. confirma que o rollback recuperou o ambiente.
+
+Comandos de deployment são arrays de argumentos e nunca são executados por meio de shell.
+
+## Persistência
+
+Todos os dados duráveis ficam em `.rea/`:
+
+| Caminho | Conteúdo |
+|---|---|
+| `.rea/knowledge/` | inventário dos repositórios |
+| `.rea/rfcs/` | RFCs |
+| `.rea/organization/` | roadmaps e portfólio |
+| `.rea/work/` | pacotes e execuções Level 6 |
+| `.rea/worktrees/` | worktrees isolados |
+| `.rea/incidents/` | análises e postmortems |
+| `.rea/evolution/experiments/` | experimentos de evolução |
+| `.rea/evolution/lessons.jsonl` | memória episódica |
+| `.rea/evolution/state.json` | orçamento, circuit breaker e filas |
+| `.rea/audit.jsonl` | auditoria geral |
+
+O histórico da conversa permanece apenas na sessão atual. Decisões, planos, execuções,
+experimentos e aprendizados são persistidos.
+
+## Configuração
+
+### Variáveis principais
+
+- `REA_HOME`
+- `REA_OLLAMA_URL`
+- `REA_AUDIT_PATH`
+- `REA_COMMAND_POLICY`
+- `REA_MODEL_CONFIG`
+- `REA_KNOWLEDGE_PATH`
+- `REA_WORK_PATH`
+- `REA_WORKTREE_PATH`
+- `REA_EVOLUTION_MODELS`
+
+### Arquivos
+
+- `config/models.yaml`: modelos e rotas dos agentes;
+- `config/policies/commands.yaml`: política de comandos;
+- `config/evolution-benchmark.json`: benchmark da autoevolução;
+- `config/evolution-deployment.example.json`: exemplo de integração de deployment.
+
+## Referência da CLI
+
+```bash
+rea
+rea chat
+rea init .
+rea init . --workspace
+rea status
+rea models status
+rea policy check "git status"
+
+rea repo scan .
+rea repo list
+
+rea org plan "objetivo" --repo owner/repository
+rea org list
+rea org show PLAN_ID
+rea org publish PLAN_ID --approve-rule github-issue-create
+
+rea team plan 42 --repo owner/repository
+rea team review .rea/work/issue-42-plan.json
+rea-agents capabilities
+
+rea issue analyze 42 --repo owner/repository
+rea issue run 42 --repo owner/repository --workspace .
 
 rea production policy
-rea production inspect --service X --signals ./snap.jsonl [--git-repo ../repo]
-rea incident analyze INC-ID --service X --title "..." --signals ./snap.jsonl [--git-repo ../repo]
+rea production inspect --service service --signals signals.jsonl
+rea incident analyze INC-001 --service service --title "Incidente" --signals signals.jsonl
 
-rea sandbox run "pytest" --workspace . --image python:3.12-slim
+rea sandbox run "pytest" --workspace .
+
+rea-evolve discover --repo owner/repository
+rea-evolve run hypothesis.json --repo owner/repository
+rea-evolve daemon --repo owner/repository --workspace .
+rea-evolve status
+rea-evolve lessons --repo owner/repository
+rea-evolve promote EXPERIMENT_ID --pr 123 --repo owner/repository
+rea-evolve canary CANDIDATE_REF --config deployment.json
 ```
 
-Sandboxed commands have networking disabled by default and must be explicitly allowed by the
-command policy before they run.
-
-## Development
+## Desenvolvimento e validação
 
 ```bash
-python -m pytest        # 138 tests
-python -m ruff check .  # lint
+python -m pytest
+python -m ruff check .
+python scripts/validate.py
 ```
 
-## Milestone history
+O script de validação executa:
 
-REA was built incrementally; each milestone's detailed design doc is under `docs/architecture/`.
+1. compilação do bytecode;
+2. verificação de dependências;
+3. Ruff;
+4. Pytest.
 
-| Milestone | What it added |
+## Ativação segura da autonomia
+
+Antes de habilitar `auto-merge`:
+
+1. mantenha o runner self-hosted online;
+2. proteja a branch `main`;
+3. proíba push direto;
+4. torne a CI obrigatória;
+5. configure CODEOWNERS para arquivos críticos;
+6. utilize tokens com privilégio mínimo;
+7. separe credenciais de leitura, PR, merge e produção;
+8. configure métricas e SLOs reais;
+9. valide shadow e rollback;
+10. comece com um experimento de baixo risco por dia.
+
+A aplicação verifica parte desses controles em tempo de execução, mas as regras do servidor
+GitHub e as permissões externas continuam sendo a camada final de autoridade.
+
+## Histórico de versões
+
+| Versão | Evolução |
 |---|---|
-| [V0.1](docs/architecture/V0.1.md) | CLI, model routing, Docker sandbox, command allowlist, audit log, draft-only GitHub PR adapter |
-| [V0.2](docs/architecture/V0.2.md) | Deterministic Knowledge Engine — languages, AST/import graph, governed Git history, multi-repo catalog |
-| [V0.3](docs/architecture/V0.3.md) | First AI team: Engineering Manager → Tech Lead → Senior Developer → Reviewer |
-| [V0.4](docs/architecture/V0.4.md) | Level 6: governed Issue → worktree → implementation → sandboxed tests → review → draft PR |
-| [V0.5](docs/architecture/V0.5.md) | Specialist routing: Backend, Frontend, Mobile, Database, DevOps/SRE, QA |
-| [V0.6](docs/architecture/V0.6.md) | Read-only production/SRE diagnostics and postmortems |
-| [V0.7](docs/architecture/V0.7.md) | Deterministic risk engine + Security/Performance/Cloud/FinOps specialist gate |
-| [V1.0](docs/architecture/V1.0.md) | AI Engineering Manager: strategic goal → prioritized, dependency-ordered Work Unit portfolio |
-| *(unreleased)* | Conversational governance: clone, natural-language git, RFC-gated roadmap proposal, read-only explore, streaming replies, live progress, Plan/Auto session modes |
+| V0.1 | CLI, modelos, sandbox, políticas, auditoria e PR draft |
+| V0.2 | Knowledge Engine |
+| V0.3 | primeira equipe multiagente |
+| V0.4 | Level 6 Issue-to-PR |
+| V0.5 | agentes especializados |
+| V0.6 | diagnóstico de produção |
+| V0.7 | governança avançada e motor de risco |
+| V1.0 | organização de engenharia e portfólio |
+| V1.1 | autoevolução mensurável, worker, promoção e canário |
+
+Os documentos de arquitetura estão em `docs/architecture/`. O manual operacional da
+autoevolução está em `docs/autonomous-evolution-operations.md`.
+
+## Estado de segurança
+
+O REA foi construído para aumentar autonomia sem eliminar controle. Mesmo no modo mais autônomo:
+
+- custos exigem autorização específica;
+- mudanças críticas exigem aprovação;
+- produção exige autorização própria;
+- alterações de governança não podem se autoaprovar;
+- regressões críticas bloqueiam promoção;
+- a ausência de evidência bloqueia decisões;
+- a ausência de CI verde bloqueia merge;
+- a ausência de branch protection bloqueia auto-merge.
