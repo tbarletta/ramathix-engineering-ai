@@ -756,7 +756,6 @@ class CommandSkillGenerator:
         return destination
 
 
-
 class SkillRuntime:
     def __init__(
         self,
