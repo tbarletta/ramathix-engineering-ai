@@ -94,6 +94,9 @@ class EvolutionWorkflow:
             report("Comparing candidate against baseline")
             evaluation = self.evaluator.compare(baseline_ref, candidate_ref, benchmark)
             experiment.evaluation = evaluation
+            reward_recorder = getattr(self.builder, "record_reward", None)
+            if reward_recorder is not None:
+                reward_recorder(evaluation.delta, evaluation.passed)
             decision = self.promotion.decide(
                 evaluation,
                 risk=hypothesis.risk,

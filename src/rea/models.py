@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,9 @@ class ModelRouter:
         if alias is None:
             raise KeyError(f"no model route configured for role: {role}")
         config = self.models[alias]
+        evolution_model = os.getenv("REA_EVOLUTION_MODEL")
+        if evolution_model and role not in {"utility"}:
+            config = {**config, "model": evolution_model}
         return ModelTarget(
             alias=alias,
             provider=config["provider"],
