@@ -13,6 +13,7 @@ from .skills import (
     SkillGapDetector,
     SkillLifecycle,
     SkillRegistry,
+    SkillRuntime,
     SkillValidator,
 )
 
@@ -97,6 +98,25 @@ def record(
         safety_failure=safety_failure,
     )
     typer.echo(json.dumps(asdict(record), ensure_ascii=False, indent=2))
+
+
+@app.command("invoke")
+def invoke(
+    skill_id: str,
+    payload: str = typer.Option("{}", "--payload"),
+    image: str = typer.Option("python:3.12-slim", "--image"),
+    grant_permission: list[str] = typer.Option([], "--grant-permission"),
+) -> None:
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise typer.BadParameter("--payload deve ser um objeto JSON")
+    lifecycle = _lifecycle(image)
+    result = SkillRuntime(lifecycle, image=image).invoke(
+        skill_id,
+        data,
+        granted_permissions=set(grant_permission),
+    )
+    typer.echo(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 @app.command("reconcile")
