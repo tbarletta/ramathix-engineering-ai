@@ -13,6 +13,7 @@ from rea.level6.coding import (
     WorkspaceReader,
 )
 from rea.level6.workflow import Level6Workflow
+from rea.level6.workspace import Worktree, WorkspaceBoundaryError, WorkspaceManager
 from rea.policy import CommandPolicy
 from rea.team.contracts import (
     DeveloperProposal,
@@ -153,3 +154,36 @@ def test_local_runner_never_auto_approves_cost(tmp_path: Path) -> None:
             approved_rules={"cost-sensitive"},
         )
     assert exc.value.decision is Decision.COST_APPROVAL
+
+
+def test_validation_cannot_change_unplanned_files(tmp_path: Path) -> None:
+    approved = tmp_path / "src" / "service.py"
+    unexpected = tmp_path / ".github" / "workflows" / "ci.yml"
+    approved.parent.mkdir(parents=True)
+    unexpected.parent.mkdir(parents=True)
+    approved.write_text("VALUE = 1\n", encoding="utf-8")
+    unexpected.write_text("name: changed\n", encoding="utf-8")
+
+    class FakeRunner:
+        def run(self, argv, **kwargs):
+            if argv[:2] == ["git", "status"]:
+                return type(
+                    "Result",
+                    (),
+                    {
+                        "returncode": 0,
+                        "stdout": " M .github/workflows/ci.yml\\0",
+                        "stderr": "",
+                    },
+                )()
+            raise AssertionError(argv)
+
+    manager = WorkspaceManager(
+        source_root=tmp_path,
+        worktree_root=tmp_path / "worktrees",
+        runner=FakeRunner(),
+        audit=AuditLog(tmp_path / "audit.jsonl"),
+    )
+    worktree = Worktree(tmp_path, "branch", "main")
+    with pytest.raises(WorkspaceBoundaryError):
+        manager.assert_only_allowed_changes(worktree, {"src/service.py"})
