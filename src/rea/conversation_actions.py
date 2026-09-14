@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -198,6 +199,7 @@ class ConversationActionController:
         run_git_command: Callable[[list[str], str | None], str] | None = None,
         read_file: Callable[[str], str] | None = None,
         list_directory: Callable[[str], str] | None = None,
+        invoke_skill: Callable[[str, dict[str, Any]], Any] | None = None,
         on_status: Callable[[str], None] | None = None,
     ) -> None:
         self.workflow = workflow
@@ -211,11 +213,31 @@ class ConversationActionController:
         self.run_git_command = run_git_command
         self.read_file = read_file
         self.list_directory = list_directory
+        self.invoke_skill = invoke_skill
         self.on_status = on_status
         self.plan: OrganizationPlan | None = None
         self.pending: PendingAction | None = None
         self.mentioned_repository: str | None = repository
         self.mode: SessionMode = SessionMode.DEFAULT
+
+
+    def _invoke_skill(self, message: str) -> str:
+        if self.invoke_skill is None:
+            return "Runtime de skills não configurado nesta sessão."
+        parts = message.split(maxsplit=2)
+        if len(parts) < 2:
+            return "Uso: /skill ID {JSON}"
+        payload: dict[str, Any] = {}
+        if len(parts) == 3:
+            try:
+                parsed = json.loads(parts[2])
+            except json.JSONDecodeError as exc:
+                return f"Payload JSON inválido: {exc}"
+            if not isinstance(parsed, dict):
+                return "O payload da skill deve ser um objeto JSON."
+            payload = parsed
+        result = self.invoke_skill(parts[1], payload)
+        return json.dumps(result, ensure_ascii=False, indent=2)
 
     def _report_status(self, label: str) -> None:
         """Report what REA is about to do, for a CLI-level progress indicator to show."""
@@ -248,6 +270,8 @@ class ConversationActionController:
                 return "Ação pendente cancelada. Nenhuma alteração foi executada."
             if _looks_like_approval(normalized):
                 return self._approve()
+        if message.strip().startswith("/skill "):
+            return self._invoke_skill(message.strip())
         if match := re.fullmatch(r"/usar\s+([\w-]+)", normalized):
             return self._use_plan(match.group(1))
         if match := re.fullmatch(r"/executar\s+([\w-]+)", normalized):
