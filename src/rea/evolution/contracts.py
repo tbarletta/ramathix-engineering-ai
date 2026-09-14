@@ -61,7 +61,7 @@ class EvolutionMetrics:
     coverage: float = 0.0
     latency_seconds: float = 0.0
     gpu_minutes: float = 0.0
-    safety_failures: int = 0
+    safety_failures: int | None = None
 
     def validate(self) -> None:
         for name in ("task_success_rate", "first_pass_rate", "coverage"):
@@ -73,10 +73,11 @@ class EvolutionMetrics:
             "human_interventions",
             "latency_seconds",
             "gpu_minutes",
-            "safety_failures",
         ):
             if getattr(self, name) < 0:
                 raise ValueError(f"{name} cannot be negative")
+        if self.safety_failures is not None and self.safety_failures < 0:
+            raise ValueError("safety_failures cannot be negative")
 
 
 @dataclass(frozen=True)

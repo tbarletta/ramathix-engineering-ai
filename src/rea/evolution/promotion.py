@@ -9,9 +9,17 @@ from .contracts import EvaluationResult, PromotionDecision
 
 PROTECTED_PATHS = (
     "src/rea/governance/",
+    "src/rea/evolution/",
+    "src/rea/level6/workflow.py",
+    "src/rea/level6/workspace.py",
+    "src/rea/audit.py",
+    "src/rea/execution.py",
+    "src/rea/github.py",
     "src/rea/policy.py",
-    "src/rea/evolution/promotion.py",
+    "src/rea/sandbox.py",
     "config/policies/",
+    "config/evolution-benchmark.json",
+    "infra/benchmark/",
     ".github/",
 )
 

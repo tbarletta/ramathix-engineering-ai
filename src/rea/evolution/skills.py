@@ -125,6 +125,8 @@ class SkillManifest:
             raise ValueError("minimum_success_rate inválido")
         if self.minimum_observations < 1 or self.max_latency_seconds <= 0:
             raise ValueError("limites operacionais inválidos")
+        if not self.validation_commands:
+            raise ValueError("ao menos um comando de validação é obrigatório")
         for command in self.validation_commands:
             if not command or any(not part for part in command):
                 raise ValueError("comando de validação inválido")
@@ -318,15 +320,23 @@ class SkillValidator:
         return checksum.hexdigest()
 
 
+class RegistryConflict(RuntimeError):
+    pass
+
+
 class SkillRegistry:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.path = root / "registry.json"
+        self._loaded_digest: str | None = None
 
     def load(self) -> dict[str, list[SkillRecord]]:
         if not self.path.exists():
+            self._loaded_digest = None
             return {}
-        raw = json.loads(self.path.read_text("utf-8"))
+        content = self.path.read_bytes()
+        self._loaded_digest = hashlib.sha256(content).hexdigest()
+        raw = json.loads(content)
         return {
             skill_id: [SkillRecord.from_dict(item) for item in records]
             for skill_id, records in raw.items()
@@ -334,6 +344,13 @@ class SkillRegistry:
 
     def save(self, records: dict[str, list[SkillRecord]]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
+        current = (
+            hashlib.sha256(self.path.read_bytes()).hexdigest()
+            if self.path.exists()
+            else None
+        )
+        if current != self._loaded_digest:
+            raise RegistryConflict("registro de skills alterado concorrentemente")
         payload = {
             skill_id: [asdict(item) for item in versions]
             for skill_id, versions in sorted(records.items())
@@ -344,6 +361,7 @@ class SkillRegistry:
             encoding="utf-8",
         )
         os.replace(temporary, self.path)
+        self._loaded_digest = hashlib.sha256(self.path.read_bytes()).hexdigest()
 
     def get(self, skill_id: str, version: str | None = None) -> SkillRecord:
         versions = self.load().get(skill_id, [])
@@ -416,6 +434,9 @@ class SkillLifecycle:
             package = generator.generate(proposal, destination).resolve()
             if destination.resolve() not in {package, *package.parents}:
                 raise ValueError("gerador retornou pacote fora da área de staging")
+            generated = SkillManifest.load(package)
+            if generated.id != proposal.id:
+                raise ValueError("a skill gerada não corresponde à proposta")
             record = self.install(package, approvals=approvals, activate=activate)
             self.audit(
                 "skill.generation_completed",
@@ -446,6 +467,11 @@ class SkillLifecycle:
         versions = records.setdefault(manifest.id, [])
         if any(item.version == manifest.version for item in versions):
             raise ValueError("versão da skill já registrada")
+        if versions:
+            newest = max(tuple(int(part) for part in item.version.split(".")) for item in versions)
+            candidate = tuple(int(part) for part in manifest.version.split("."))
+            if candidate <= newest:
+                raise ValueError("a nova versão deve ser superior às versões registradas")
         self._validate_dependencies(manifest, records)
         target = self.packages / manifest.id / manifest.version / report.digest
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -539,6 +565,17 @@ class SkillLifecycle:
                 record = self._active(records, skill_id)
                 manifest = SkillManifest.load(Path(record.package_path))
                 self._verify_integrity(record)
+                active_ids = {
+                    candidate_id
+                    for candidate_id, versions in records.items()
+                    if any(item.status is SkillStatus.ACTIVE for item in versions)
+                }
+                missing_dependencies = set(record.dependencies).difference(active_ids)
+                if missing_dependencies:
+                    raise ValueError(
+                        "dependências deixaram de estar ativas: "
+                        + ", ".join(sorted(missing_dependencies))
+                    )
                 metrics = record.metrics
                 unhealthy = (
                     metrics.safety_failures > 0
@@ -632,7 +669,12 @@ class SkillLifecycle:
         existing = self.registry.load()
         created: list[SkillRecord] = []
         for proposal in proposals:
-            if proposal.id in existing or len(created) >= max_skills:
+            versions = existing.get(proposal.id, [])
+            needs_revision = any(
+                item.status in {SkillStatus.QUARANTINED, SkillStatus.ROLLED_BACK}
+                for item in versions
+            )
+            if (versions and not needs_revision) or len(created) >= max_skills:
                 continue
             created.append(
                 self.create(
@@ -694,7 +736,10 @@ class CommandSkillGenerator:
             encoding="utf-8",
         )
         environment = {
-            **os.environ,
+            "PATH": os.environ.get("PATH", ""),
+            "REA_OLLAMA_URL": os.environ.get(
+                "REA_OLLAMA_URL", "http://localhost:11434"
+            ),
             "REA_SKILL_PROPOSAL": str(request),
             "REA_SKILL_OUTPUT": str(destination),
         }
@@ -709,7 +754,6 @@ class CommandSkillGenerator:
         if result.returncode:
             raise RuntimeError((result.stdout + result.stderr).strip()[-4000:])
         return destination
-
 
 
 class SkillRuntime:

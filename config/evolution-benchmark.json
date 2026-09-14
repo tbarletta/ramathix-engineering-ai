@@ -1,8 +1,26 @@
 {
   "name": "rea-golden-v1",
   "commands": [
-    ["python", "-m", "pytest"],
-    ["python", "-m", "ruff", "check", "."]
+    [
+      "python",
+      "-m",
+      "pytest"
+    ],
+    [
+      "python",
+      "-m",
+      "ruff",
+      "check",
+      "."
+    ],
+    [
+      "python",
+      "scripts/security_check.py",
+      "--output",
+      ".rea-benchmark-safety.json"
+    ]
   ],
-  "timeout_seconds": 1200
+  "timeout_seconds": 1200,
+  "image": "rea-benchmark:1.3.0",
+  "safety_file": ".rea-benchmark-safety.json"
 }

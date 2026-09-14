@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict
 from pathlib import Path
 
 import typer
 
+from ..audit import AuditLog
 from ..config import Settings
 from .skills import (
     CommandSkillGenerator,
@@ -35,7 +37,17 @@ def _events(path: Path) -> list[dict]:
 
 
 def _lifecycle(image: str) -> SkillLifecycle:
-    return SkillLifecycle(_root(), SkillValidator(DockerSkillRunner(image)))
+    settings = Settings.from_env()
+    audit = AuditLog(settings.audit_path)
+    return SkillLifecycle(
+        _root(),
+        SkillValidator(DockerSkillRunner(image)),
+        audit=lambda event, data: audit.write(
+            event,
+            actor="skill_controller",
+            data=data,
+        ),
+    )
 
 
 @app.command("discover")
@@ -80,6 +92,35 @@ def cycle(
         max_skills=max_skills,
     )
     typer.echo(json.dumps([asdict(item) for item in created], ensure_ascii=False, indent=2))
+
+
+@app.command("daemon")
+def daemon(
+    generator_command: list[str] = typer.Option(..., "--generator-command"),
+    audit: Path = typer.Option(Path(".rea/audit.jsonl"), "--audit"),
+    image: str = typer.Option("python:3.12-slim", "--image"),
+    approve_permission: list[str] = typer.Option([], "--approve-permission"),
+    minimum_occurrences: int = typer.Option(2, min=1),
+    max_skills: int = typer.Option(1, min=1, max=10),
+    interval: int = typer.Option(3600, min=60),
+    once: bool = typer.Option(False, "--once"),
+) -> None:
+    lifecycle = _lifecycle(image)
+    generator = CommandSkillGenerator(tuple(generator_command))
+    while True:
+        created = lifecycle.run_once(
+            _events(audit),
+            generator,
+            approvals=set(approve_permission),
+            minimum_occurrences=minimum_occurrences,
+            max_skills=max_skills,
+        )
+        typer.echo(
+            json.dumps([asdict(item) for item in created], ensure_ascii=False, indent=2)
+        )
+        if once:
+            return
+        time.sleep(interval)
 
 
 @app.command("record")

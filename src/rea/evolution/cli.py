@@ -9,7 +9,9 @@ import typer
 from ..audit import AuditLog
 from ..cli import _run_level6_issue
 from ..config import Settings
+from ..execution import GovernedLocalRunner
 from ..level6.contracts import Level6Result
+from ..policy import CommandPolicy
 from .contracts import EvolutionHypothesis
 from .discovery import AuditObserver, OpportunityDetector
 from .deployment import CommandDeploymentAdapter, DeploymentCommands
@@ -267,9 +269,16 @@ def canary(
     max_percent: int = typer.Option(10, "--max-percent", min=1, max=25),
 ) -> None:
     """Run shadow validation and an explicitly approved, automatically reversible canary."""
+    settings = Settings.from_env()
+    command_policy = CommandPolicy.from_yaml(settings.command_policy)
     adapter = CommandDeploymentAdapter(
         DeploymentCommands.from_json(config),
         workspace.resolve(),
+        runner=GovernedLocalRunner(
+            command_policy,
+            AuditLog(settings.audit_path),
+        ),
+        approved_rules=set(approve_rule),
     )
     controller = CanaryController(adapter, max_canary_percent=max_percent)
     result = controller.run(

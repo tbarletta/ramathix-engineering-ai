@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -25,6 +24,7 @@ from .conversation_actions import (
     SessionMode,
 )
 from .domain import Decision
+from .evolution.skills import DockerSkillRunner, SkillLifecycle, SkillRuntime, SkillValidator
 from .execution import ExecutionApprovalRequired, ExecutionDenied, GovernedLocalRunner
 from .github import GitHubClient, parse_github_slug
 from .governance.redaction import redact_text
@@ -313,6 +313,21 @@ def _conversation_actions(
     )
     actions.read_file = lambda path: _read_file_action(workspace, path)
     actions.list_directory = lambda path: _list_directory_action(workspace, path)
+    skill_audit = AuditLog(settings.audit_path)
+    skill_lifecycle = SkillLifecycle(
+        settings.home / ".rea" / "skills",
+        SkillValidator(DockerSkillRunner()),
+        audit=lambda event, data: skill_audit.write(
+            event,
+            actor="conversation_skill_runtime",
+            data=data,
+        ),
+    )
+    skill_runtime = SkillRuntime(skill_lifecycle)
+    actions.invoke_skill = lambda skill_id, payload: skill_runtime.invoke(
+        skill_id,
+        payload,
+    )
     return actions
 
 
@@ -348,43 +363,23 @@ def _run_git_command_action(
     argv: list[str],
     rule_id: str | None,
 ) -> str:
-    # Deliberately does not go through GovernedLocalRunner.run(): most git subcommands have
-    # no dedicated policy rule (rule_id is None, decision falls to the "ask" default), and
-    # GovernedLocalRunner can only ever be pre-approved via a named rule id. The chat layer
-    # already showed this exact command and required an explicit `/aprovar` before calling
-    # here, so that IS the approval — this just re-checks DENY/cost_approval defensively and
-    # logs the same audit events GovernedLocalRunner would.
-    policy = CommandPolicy.from_yaml(settings.command_policy)
-    audit = AuditLog(settings.audit_path)
-    policy_result = policy.evaluate(argv)
-    audit.write(
-        "command.policy_checked",
-        actor="conversation_action_controller",
-        data={"argv": argv, "decision": policy_result.decision, "rule": policy_result.rule_id},
+    runner = GovernedLocalRunner(
+        CommandPolicy.from_yaml(settings.command_policy),
+        AuditLog(settings.audit_path),
     )
-    if policy_result.decision is Decision.DENY:
-        raise RuntimeError(policy_result.reason)
-    if policy_result.decision is Decision.COST_APPROVAL:
-        raise RuntimeError("esta operação exige aprovação de custo e não é suportada por aqui")
-
-    completed = subprocess.run(
+    result = runner.run(
         argv,
         cwd=workspace.root,
-        capture_output=True,
-        text=True,
         timeout=120,
-        check=False,
-    )
-    audit.write(
-        "command.executed",
+        approved_rules={rule_id} if rule_id else set(),
+        approval_granted=True,
         actor="conversation_action_controller",
-        data={"argv": argv, "returncode": completed.returncode},
     )
-    if completed.returncode != 0:
+    if result.returncode != 0:
         raise RuntimeError(
-            completed.stderr.strip() or completed.stdout.strip() or "comando git falhou"
+            result.stderr.strip() or result.stdout.strip() or "comando git falhou"
         )
-    return completed.stdout or completed.stderr
+    return result.stdout or result.stderr
 
 
 _READ_FILE_MAX_BYTES = 200_000

@@ -49,6 +49,7 @@ class DockerSandbox:
         argv: Sequence[str],
         network: bool = False,
         approved_rules: set[str] | None = None,
+        timeout: int = 900,
     ) -> ExecutionResult:
         approved_rules = approved_rules or set()
         policy_result = self.policy.evaluate(argv)
@@ -87,11 +88,38 @@ class DockerSandbox:
             "--rm",
             "--pull",
             "never",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "256",
+            "--memory",
+            "2g",
+            "--cpus",
+            "2",
+            "--tmpfs",
+            "/tmp:rw,nosuid,size=512m",
+            "--env",
+            "HOME=/tmp",
+            "--env",
+            "PYTHONDONTWRITEBYTECODE=1",
             "--workdir",
             "/workspace",
             "--mount",
             f"type=bind,src={workspace},dst=/workspace",
         ]
+        git_metadata = workspace / ".git"
+        if git_metadata.exists():
+            docker_command.extend(
+                [
+                    "--mount",
+                    (
+                        f"type=bind,src={git_metadata},dst=/workspace/.git,"
+                        "readonly"
+                    ),
+                ]
+            )
         if not network:
             docker_command.extend(["--network", "none"])
         docker_command.extend([image, *argv])
@@ -101,6 +129,7 @@ class DockerSandbox:
             check=False,
             capture_output=True,
             text=True,
+            timeout=timeout,
         )
         self.audit.write(
             "command.executed",

@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from rea.audit import AuditLog
+from rea.domain import Decision
 from rea.evolution import (
     BenchmarkSuite,
     CommandDeploymentAdapter,
@@ -17,6 +19,8 @@ from rea.evolution import (
     StateStore,
 )
 from rea.evolution.contracts import EvolutionMetrics
+from rea.execution import GovernedLocalRunner
+from rea.policy import CommandPolicy
 
 
 def hypothesis():
@@ -92,7 +96,12 @@ def test_command_deployment_verifies_rollback(tmp_path: Path):
         rollback=("python", "-c", "print('rolled')"),
         verify_rollback=("python", "-c", "raise SystemExit(0)"),
     )
-    adapter = CommandDeploymentAdapter(commands, tmp_path)
+    policy = CommandPolicy(default=Decision.ALLOW, rules=[])
+    adapter = CommandDeploymentAdapter(
+        commands,
+        tmp_path,
+        runner=GovernedLocalRunner(policy, AuditLog(tmp_path / "audit.jsonl")),
+    )
     assert adapter.deploy_shadow("candidate") == "shadow-1"
     adapter.rollback("shadow-1")
 

@@ -35,7 +35,7 @@ class EvolutionScorer:
             + metrics.coverage * w.coverage
             - metrics.escaped_regressions * w.escaped_regression
             - metrics.human_interventions * w.human_intervention
-            - metrics.safety_failures * w.safety_failure
+            - (metrics.safety_failures or 0) * w.safety_failure
             - metrics.latency_seconds * w.latency_second
             - metrics.gpu_minutes * w.gpu_minute,
             4,
@@ -75,7 +75,9 @@ class EvaluationEngine:
         baseline: EvolutionMetrics, candidate: EvolutionMetrics
     ) -> list[str]:
         failures = []
-        if candidate.safety_failures > baseline.safety_failures:
+        if baseline.safety_failures is None or candidate.safety_failures is None:
+            failures.append("safety_metrics_unknown")
+        elif candidate.safety_failures > baseline.safety_failures:
             failures.append("safety_failures")
         if candidate.escaped_regressions > baseline.escaped_regressions:
             failures.append("escaped_regressions")
