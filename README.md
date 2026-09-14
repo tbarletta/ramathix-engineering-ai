@@ -37,6 +37,7 @@ governança ou escrever em produção.
 - Otimização adaptativa da seleção de modelos e prompts.
 - Promoção automática limitada a mudanças comprovadamente seguras.
 - Shadow deployment, canário limitado e rollback verificável.
+- Criação, validação, ativação, observação e rollback autônomo de skills.
 
 ## Requisitos
 
@@ -168,7 +169,8 @@ src/rea/
 ├── governance/               risco, segurança, performance, nuvem e FinOps
 ├── level6/                   motor autônomo de Issue para PR
 ├── production/               diagnóstico de produção somente leitura
-└── evolution/                controle de autoevolução autônoma
+├── evolution/                controle de autoevolução autônoma
+└── evolution/skills.py       ciclo completo e runtime isolado de skills
 ```
 
 ## Knowledge Engine
@@ -541,6 +543,80 @@ O controlador:
 
 Comandos de deployment são arrays de argumentos e nunca são executados por meio de shell.
 
+## Ciclo autônomo de skills
+
+A versão 1.2 permite ao REA identificar capacidades ausentes e criar novas skills sem incorporar
+código não validado diretamente ao runtime.
+
+O ciclo executado é:
+
+```text
+Observar lacunas recorrentes
+→ gerar proposta com evidências
+→ criar pacote skill.json + SKILL.md
+→ validar esquema, caminhos e permissões
+→ procurar padrões perigosos
+→ executar testes em Docker isolado
+→ calcular a integridade SHA-256
+→ registrar uma versão imutável
+→ ativar de forma governada
+→ executar e coletar telemetria
+→ comparar métricas com o SLO
+→ manter, colocar em quarentena ou reverter
+```
+
+Cada manifesto define entrypoint, versão SemVer, dependências, permissões, comandos de validação,
+taxa mínima de sucesso, quantidade mínima de observações e latência máxima.
+
+### Descobrir lacunas
+
+```bash
+rea-skills discover --audit .rea/audit.jsonl
+```
+
+O detector utiliza eventos `skill.missing`, `intent.unsupported` e `tool.unavailable`. Por
+padrão, são necessárias duas ocorrências independentes antes da criação de uma proposta.
+
+### Gerar, validar e ativar automaticamente
+
+```bash
+rea-skills cycle \
+  --generator-command rea-skill-generator \
+  --minimum-occurrences 2 \
+  --max-skills 1
+```
+
+O gerador configurado recebe a proposta e produz o pacote. A validação funcional acontece em
+Docker sem rede, com filesystem somente leitura, capabilities removidas e limites de CPU, memória,
+PIDs e tempo. A ausência do Docker ou uma validação inconclusiva bloqueia a ativação.
+
+### Executar e observar
+
+```bash
+rea-skills invoke skill-exemplo --payload '{"entrada": "valor"}'
+rea-skills record skill-exemplo --success --latency 2.4
+rea-skills reconcile
+rea-skills status
+```
+
+O runtime registra invocações, sucessos, falhas, latência, custo e falhas de segurança. Violações
+de integridade colocam a versão em quarentena. Regressões de segurança ou SLO acionam rollback
+para a versão anterior.
+
+### Permissões protegidas
+
+A ativação e a invocação exigem autorização explícita quando a skill solicita:
+
+- leitura ou escrita de credenciais;
+- rede externa;
+- escrita em produção;
+- exclusão de dados;
+- merge no GitHub;
+- alteração de governança;
+- gerenciamento de outras skills.
+
+Uma skill não pode conceder a si própria essas permissões.
+
 ## Persistência
 
 Todos os dados duráveis ficam em `.rea/`:
@@ -556,6 +632,8 @@ Todos os dados duráveis ficam em `.rea/`:
 | `.rea/evolution/experiments/` | experimentos de evolução |
 | `.rea/evolution/lessons.jsonl` | memória episódica |
 | `.rea/evolution/state.json` | orçamento, circuit breaker e filas |
+| `.rea/skills/registry.json` | catálogo, versões, estados e métricas das skills |
+| `.rea/skills/packages/` | pacotes de skills versionados e verificados por SHA-256 |
 | `.rea/audit.jsonl` | auditoria geral |
 
 O histórico da conversa permanece apenas na sessão atual. Decisões, planos, execuções,
@@ -580,7 +658,8 @@ experimentos e aprendizados são persistidos.
 - `config/models.yaml`: modelos e rotas dos agentes;
 - `config/policies/commands.yaml`: política de comandos;
 - `config/evolution-benchmark.json`: benchmark da autoevolução;
-- `config/evolution-deployment.example.json`: exemplo de integração de deployment.
+- `config/evolution-deployment.example.json`: exemplo de integração de deployment;
+- `config/skill-policy.example.json`: política de sandbox e permissões das skills.
 
 ## Referência da CLI
 
@@ -621,6 +700,16 @@ rea-evolve status
 rea-evolve lessons --repo owner/repository
 rea-evolve promote EXPERIMENT_ID --pr 123 --repo owner/repository
 rea-evolve canary CANDIDATE_REF --config deployment.json
+
+rea-skills discover --audit .rea/audit.jsonl
+rea-skills cycle --generator-command rea-skill-generator
+rea-skills install /caminho/da/skill
+rea-skills invoke skill-exemplo --payload '{"entrada": "valor"}'
+rea-skills record skill-exemplo --success --latency 2.4
+rea-skills reconcile
+rea-skills rollback skill-exemplo --reason "regressão"
+rea-skills quarantine skill-exemplo --reason "violação de segurança"
+rea-skills status
 ```
 
 ## Desenvolvimento e validação
@@ -669,6 +758,7 @@ GitHub e as permissões externas continuam sendo a camada final de autoridade.
 | V0.7 | governança avançada e motor de risco |
 | V1.0 | organização de engenharia e portfólio |
 | V1.1 | autoevolução mensurável, worker, promoção e canário |
+| V1.2 | descoberta, geração, validação, runtime, telemetria e rollback de skills |
 
 Os documentos de arquitetura estão em `docs/architecture/`. O manual operacional da
 autoevolução está em `docs/autonomous-evolution-operations.md`.
