@@ -19,6 +19,7 @@ class BenchmarkSuite:
     name: str
     commands: tuple[tuple[str, ...], ...]
     coverage_file: str | None = None
+    safety_file: str | None = None
     timeout_seconds: int = 1200
     image: str = "rea-benchmark:1.3.0"
 
@@ -30,6 +31,7 @@ class BenchmarkSuite:
             name=str(data["name"]),
             commands=commands,
             coverage_file=data.get("coverage_file"),
+            safety_file=data.get("safety_file"),
             timeout_seconds=int(data.get("timeout_seconds", 1200)),
             image=str(data.get("image", "rea-benchmark:1.3.0")),
         )
@@ -80,6 +82,7 @@ class GitWorktreeBenchmarkProvider:
                     if result.returncode == 0:
                         passed += 1
                 coverage = self._coverage(root / suite.coverage_file) if suite.coverage_file else 0
+                safety = self._safety(root / suite.safety_file) if suite.safety_file else None
             finally:
                 self._git("worktree", "remove", "--force", str(root))
         total = max(len(suite.commands), 1)
@@ -89,6 +92,7 @@ class GitWorktreeBenchmarkProvider:
             first_pass_rate=rate,
             coverage=coverage,
             latency_seconds=time.monotonic() - started,
+            safety_failures=safety,
         )
 
     def _git(self, *args: str) -> None:
@@ -100,6 +104,14 @@ class GitWorktreeBenchmarkProvider:
             timeout=120,
             check=True,
         )
+
+    @staticmethod
+    def _safety(path: Path) -> int | None:
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text("utf-8"))
+        value = data.get("safety_failures")
+        return max(0, int(value)) if value is not None else None
 
     @staticmethod
     def _coverage(path: Path) -> float:
