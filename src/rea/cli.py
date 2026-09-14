@@ -363,43 +363,23 @@ def _run_git_command_action(
     argv: list[str],
     rule_id: str | None,
 ) -> str:
-    # Deliberately does not go through GovernedLocalRunner.run(): most git subcommands have
-    # no dedicated policy rule (rule_id is None, decision falls to the "ask" default), and
-    # GovernedLocalRunner can only ever be pre-approved via a named rule id. The chat layer
-    # already showed this exact command and required an explicit `/aprovar` before calling
-    # here, so that IS the approval — this just re-checks DENY/cost_approval defensively and
-    # logs the same audit events GovernedLocalRunner would.
-    policy = CommandPolicy.from_yaml(settings.command_policy)
-    audit = AuditLog(settings.audit_path)
-    policy_result = policy.evaluate(argv)
-    audit.write(
-        "command.policy_checked",
-        actor="conversation_action_controller",
-        data={"argv": argv, "decision": policy_result.decision, "rule": policy_result.rule_id},
+    runner = GovernedLocalRunner(
+        CommandPolicy.from_yaml(settings.command_policy),
+        AuditLog(settings.audit_path),
     )
-    if policy_result.decision is Decision.DENY:
-        raise RuntimeError(policy_result.reason)
-    if policy_result.decision is Decision.COST_APPROVAL:
-        raise RuntimeError("esta operação exige aprovação de custo e não é suportada por aqui")
-
-    completed = subprocess.run(
+    result = runner.run(
         argv,
         cwd=workspace.root,
-        capture_output=True,
-        text=True,
         timeout=120,
-        check=False,
-    )
-    audit.write(
-        "command.executed",
+        approved_rules={rule_id} if rule_id else set(),
+        approval_granted=True,
         actor="conversation_action_controller",
-        data={"argv": argv, "returncode": completed.returncode},
     )
-    if completed.returncode != 0:
+    if result.returncode != 0:
         raise RuntimeError(
-            completed.stderr.strip() or completed.stdout.strip() or "comando git falhou"
+            result.stderr.strip() or result.stdout.strip() or "comando git falhou"
         )
-    return completed.stdout or completed.stderr
+    return result.stdout or result.stderr
 
 
 _READ_FILE_MAX_BYTES = 200_000
