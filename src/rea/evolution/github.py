@@ -60,12 +60,17 @@ class GitHubEvolutionClient(GitHubClient):
 
     def branch_protected(self, repository: str, branch: str = "main") -> bool:
         response = httpx.get(
-            f"{self.base_url}/repos/{repository}/branches/{branch}",
+            f"{self.base_url}/repos/{repository}/branches/{branch}/protection",
             headers=self._headers(),
             timeout=30,
         )
-        response.raise_for_status()
-        return bool(response.json().get("protected"))
+        if response.status_code != 200:
+            return False
+        data = response.json()
+        checks = data.get("required_status_checks") or {}
+        contexts = checks.get("contexts") or []
+        enforce_admins = (data.get("enforce_admins") or {}).get("enabled", False)
+        return bool(contexts) and bool(enforce_admins)
 
     def mark_ready(self, pull_request_node_id: str) -> None:
         response = httpx.post(
@@ -84,7 +89,12 @@ class GitHubEvolutionClient(GitHubClient):
         if response.json().get("errors"):
             raise RuntimeError("GitHub refused to mark the pull request ready")
 
-    def checks_green(self, repository: str, sha: str) -> bool:
+    def checks_green(
+        self,
+        repository: str,
+        sha: str,
+        required_checks: tuple[str, ...] = ("validate",),
+    ) -> bool:
         response = httpx.get(
             f"{self.base_url}/repos/{repository}/commits/{sha}/check-runs",
             headers={**self._headers(), "Accept": "application/vnd.github+json"},
@@ -92,10 +102,13 @@ class GitHubEvolutionClient(GitHubClient):
         )
         response.raise_for_status()
         runs = response.json().get("check_runs", [])
-        return bool(runs) and all(
-            item["status"] == "completed"
-            and item.get("conclusion") in {"success", "neutral", "skipped"}
-            for item in runs
+        by_name = {str(item.get("name")): item for item in runs}
+        if any(name not in by_name for name in required_checks):
+            return False
+        return all(
+            by_name[name].get("status") == "completed"
+            and by_name[name].get("conclusion") == "success"
+            for name in required_checks
         )
 
     def evolution_records(self, repository: str) -> list[dict]:
