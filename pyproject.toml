@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ramathix-engineering-ai"
-version = "1.1.0"
+version = "1.2.0"
 description = "Local-first, governed multi-agent software engineering platform for Ramathix"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,6 +24,7 @@ dev = [
 rea = "rea.production.cli:app"
 rea-agents = "rea.specialists.cli:app"
 rea-evolve = "rea.evolution.cli:app"
+rea-skills = "rea.evolution.skills_cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rea"]
