@@ -21,6 +21,20 @@ from .runtime import (
     Level6CandidateBuilder,
     Level6PullRequestPublisher,
 )
+from .skills import (
+    CommandSkillGenerator,
+    DockerSkillRunner,
+    SkillGapDetector,
+    SkillLifecycle,
+    SkillManifest,
+    SkillMetrics,
+    SkillProposal,
+    SkillRecord,
+    SkillRegistry,
+    SkillStatus,
+    SkillValidator,
+    ValidationReport,
+)
 from .state import EvolutionState, RepositoryLock, StateStore
 from .store import JsonEvolutionStore
 from .worker import EvolutionWorker
@@ -33,7 +47,9 @@ __all__ = [
     "CanaryController",
     "CircuitOpen",
     "CommandDeploymentAdapter",
+    "CommandSkillGenerator",
     "DeploymentCommands",
+    "DockerSkillRunner",
     "EvaluationEngine",
     "EvaluationResult",
     "EvolutionBudget",
@@ -58,5 +74,15 @@ __all__ = [
     "PromotionPolicy",
     "RepositoryLock",
     "ScoreWeights",
+    "SkillGapDetector",
+    "SkillLifecycle",
+    "SkillManifest",
+    "SkillMetrics",
+    "SkillProposal",
+    "SkillRecord",
+    "SkillRegistry",
+    "SkillStatus",
+    "SkillValidator",
     "StateStore",
+    "ValidationReport",
 ]

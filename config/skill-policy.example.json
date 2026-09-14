@@ -1,0 +1,22 @@
+{
+  "minimum_occurrences": 2,
+  "max_skills_per_cycle": 1,
+  "sandbox": {
+    "image": "python:3.12-slim",
+    "network": "none",
+    "read_only": true,
+    "memory": "512m",
+    "cpus": 1,
+    "timeout_seconds": 300
+  },
+  "protected_permissions": [
+    "credentials.read",
+    "credentials.write",
+    "data.delete",
+    "github.merge",
+    "governance.write",
+    "network.external",
+    "production.write",
+    "skill.manage"
+  ]
+}
