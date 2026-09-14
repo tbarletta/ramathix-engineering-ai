@@ -1,8 +1,19 @@
 {
   "name": "rea-golden-v1",
   "commands": [
-    ["python", "-m", "pytest"],
-    ["python", "-m", "ruff", "check", "."]
+    [
+      "python",
+      "-m",
+      "pytest"
+    ],
+    [
+      "python",
+      "-m",
+      "ruff",
+      "check",
+      "."
+    ]
   ],
-  "timeout_seconds": 1200
+  "timeout_seconds": 1200,
+  "image": "rea-benchmark:1.3.0"
 }
