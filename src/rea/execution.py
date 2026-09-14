@@ -51,6 +51,7 @@ class GovernedLocalRunner:
         cwd: Path,
         timeout: int = 30,
         approved_rules: set[str] | None = None,
+        approval_granted: bool = False,
         actor: str = "execution_engine",
     ) -> CommandResult:
         approved_rules = approved_rules or set()
@@ -77,6 +78,7 @@ class GovernedLocalRunner:
         if (
             policy_result.decision is Decision.ASK
             and policy_result.rule_id not in approved_rules
+            and not approval_granted
         ):
             raise ExecutionApprovalRequired(
                 decision=policy_result.decision,
