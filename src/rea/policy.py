@@ -10,7 +10,6 @@ from .domain import Decision, PolicyResult
 
 
 _DESTRUCTIVE_GIT = {"clean", "reset"}
-_MUTATING_GIT = {"checkout", "clone", "commit", "fetch", "merge", "pull", "push", "stash", "switch"}
 _SHELL_EXECUTORS = {"bash", "cmd", "fish", "powershell", "pwsh", "sh", "zsh"}
 _SHELL_FLAGS = {"-c", "/c", "-command", "--command"}
 _DANGEROUS_FLAGS = {"--force", "--force-with-lease", "--hard", "--delete", "-D"}
@@ -74,13 +73,6 @@ class CommandPolicy:
                     "semantic-git-destructive",
                     "destructive Git effect is forbidden",
                 )
-            if operation in _MUTATING_GIT:
-                return PolicyResult(
-                    Decision.ASK,
-                    f"git-{operation}",
-                    "mutating Git effect requires explicit approval",
-                )
-
         if executable == "docker" and len(lowered) > 1:
             if lowered[1] in {"run", "exec", "push", "rm", "rmi"}:
                 return PolicyResult(
