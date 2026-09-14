@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from rea.audit import AuditLog
+from rea.domain import Decision
 from rea.evolution import (
     BenchmarkSuite,
     CommandDeploymentAdapter,
@@ -16,8 +18,6 @@ from rea.evolution import (
     RepositoryLock,
     StateStore,
 )
-from rea.audit import AuditLog
-from rea.domain import Decision
 from rea.evolution.contracts import EvolutionMetrics
 from rea.execution import GovernedLocalRunner
 from rea.policy import CommandPolicy
