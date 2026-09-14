@@ -111,6 +111,26 @@ class WorkspaceManager:
                     paths.append(self._safe_relative(renamed))
         return list(dict.fromkeys(paths))
 
+
+    def assert_only_allowed_changes(
+        self,
+        worktree: Worktree,
+        allowed_paths: set[str],
+    ) -> None:
+        allowed = {self._safe_relative(path) for path in allowed_paths}
+        changed = set(self.changed_paths(worktree))
+        unexpected = sorted(changed.difference(allowed))
+        if unexpected:
+            self.audit.write(
+                "level6.boundary_violation",
+                actor="workspace_manager",
+                data={"paths": unexpected},
+            )
+            raise WorkspaceBoundaryError(
+                "validation changed files outside the approved plan: "
+                + ", ".join(unexpected)
+            )
+
     def stage(self, worktree: Worktree) -> list[str]:
         paths = self.changed_paths(worktree)
         if not paths:
