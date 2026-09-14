@@ -6,6 +6,7 @@ import pytest
 from rea.evolution.skills import (
     SkillGapDetector,
     SkillLifecycle,
+    SkillRuntime,
     SkillStatus,
     SkillValidator,
 )
@@ -170,3 +171,17 @@ def test_missing_dependency_is_rejected(tmp_path):
                 dependencies=("skill-ausente",),
             )
         )
+
+
+def test_runtime_invokes_active_skill_and_records_metrics(tmp_path):
+    service = lifecycle(tmp_path)
+    service.install(package(tmp_path / "candidate"))
+    runtime = SkillRuntime(
+        service,
+        executor=lambda _package, _manifest, payload, _timeout: (
+            True,
+            json.dumps({"echo": payload["value"]}),
+        ),
+    )
+    assert runtime.invoke("skill-teste", {"value": 42}) == {"echo": 42}
+    assert service.registry.get("skill-teste").metrics.successes == 1
