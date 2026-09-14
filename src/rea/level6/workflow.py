@@ -175,6 +175,7 @@ class Level6Workflow:
                 approved_rules=approved_rules,
                 allow_network=allow_network,
             )
+            manager.assert_only_allowed_changes(worktree, allowed_paths)
             failed = [item for item in validation if item.returncode != 0]
             if failed:
                 record = IterationRecord(
