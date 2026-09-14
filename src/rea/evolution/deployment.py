@@ -76,5 +76,6 @@ class CommandDeploymentAdapter:
             cwd=self.cwd,
             timeout=900,
             approved_rules=self.approved_rules,
+            approval_granted=True,
             actor="deployment_controller",
         )
