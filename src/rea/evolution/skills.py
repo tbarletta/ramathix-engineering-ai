@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
+from .capabilities import CapabilityBroker
+
 
 _ID = re.compile(r"^[a-z][a-z0-9-]{2,63}$")
 _VERSION = re.compile(r"^\d+\.\d+\.\d+$")
@@ -768,11 +770,15 @@ class SkillRuntime:
             tuple[bool, str],
         ]
         | None = None,
+        capability_broker: CapabilityBroker | None = None,
     ) -> None:
         self.lifecycle = lifecycle
         self.image = image
         self.timeout_seconds = timeout_seconds
         self.executor = executor or self._docker_execute
+        self.capability_broker = capability_broker or CapabilityBroker(
+            lifecycle.root / "capability.key"
+        )
 
     def invoke(
         self,
@@ -784,12 +790,18 @@ class SkillRuntime:
         record = self.lifecycle.registry.get(skill_id)
         self.lifecycle._verify_integrity(record)
         protected = self.lifecycle.protected_permissions.intersection(record.permissions)
-        missing = protected.difference(granted_permissions or set())
-        if missing:
-            raise PermissionError(
-                "permissões não concedidas para esta execução: "
-                + ", ".join(sorted(missing))
-            )
+        token = self.capability_broker.issue(
+            skill_id=record.id,
+            version=record.version,
+            capabilities=set(protected),
+            approved_capabilities=granted_permissions or set(),
+        )
+        self.capability_broker.verify(
+            token,
+            skill_id=record.id,
+            version=record.version,
+            required_capabilities=set(protected),
+        )
         package = Path(record.package_path)
         manifest = SkillManifest.load(package)
         started = time.monotonic()
