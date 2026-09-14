@@ -185,3 +185,25 @@ def test_runtime_invokes_active_skill_and_records_metrics(tmp_path):
     )
     assert runtime.invoke("skill-teste", {"value": 42}) == {"echo": 42}
     assert service.registry.get("skill-teste").metrics.successes == 1
+
+
+def test_manifest_requires_functional_validation(tmp_path):
+    candidate = package(tmp_path / "candidate")
+    manifest = json.loads((candidate / "skill.json").read_text("utf-8"))
+    manifest["validation_commands"] = []
+    (candidate / "skill.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="ao menos um comando"):
+        SkillValidator(Runner()).validate(candidate)
+
+
+def test_registry_detects_concurrent_update(tmp_path):
+    from rea.evolution.skills import RegistryConflict, SkillRegistry
+
+    root = tmp_path / "registry"
+    first = SkillRegistry(root)
+    second = SkillRegistry(root)
+    assert first.load() == {}
+    assert second.load() == {}
+    first.save({})
+    with pytest.raises(RegistryConflict):
+        second.save({})
